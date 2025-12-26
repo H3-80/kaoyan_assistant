@@ -39,7 +39,7 @@
 ## ✨ 功能特性
 
 ### 📥 数据采集
-- **多线程爬虫**：支持并发爬取，提高数据采集效率（默认2线程）
+- **多线程爬虫**：支持并发爬取，提高数据采集效率
 - **智能容错**：自动重试、浏览器重启、异常处理机制
 - **数据去重**：基于唯一键自动去重，保证数据质量
 - **断点续传**：记录爬取进度，支持中断后继续爬取
@@ -119,8 +119,8 @@
 
 1. **克隆项目**
    ```bash
-   git clone https://github.com/H3-80/kaoyan-ai-assistant.git
-   cd kaoyan-ai-assistant
+   git clone https://github.com/H3-80/kaoyan_assistant.git
+   cd kaoyan_assistant
    ```
 
 2. **安装Python依赖**
@@ -366,4 +366,5 @@ ORDER BY count DESC;
 - AI服务基于DeepSeek大语言模型（https://www.deepseek.com/）
 
 **免责声明**：本项目仅供学习和研究使用，请勿用于商业用途。数据准确性以官方发布为准。
+
 
