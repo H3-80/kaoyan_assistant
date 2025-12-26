@@ -1,31 +1,14 @@
-import time
-import pandas as pd
+# main.py
 import mysql.connector
 from mysql.connector import Error
-from selenium import webdriver
-from selenium.webdriver.common.by import By
 from selenium.webdriver.edge.service import Service
 from selenium.webdriver.edge.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException, ElementNotInteractableException, \
-    StaleElementReferenceException, InvalidSessionIdException, WebDriverException
-from selenium.webdriver.common.action_chains import ActionChains
-from selenium.webdriver.common.keys import Keys
-import logging
-import re
-import random
-import sys
-import os
-from datetime import datetime
+from selenium.common.exceptions import InvalidSessionIdException, WebDriverException
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from queue import Queue
-import json
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
-import json
 import time
 import random
 import logging
@@ -83,7 +66,7 @@ class ThreadSafeSpider:
         self.db_config = db_config
         self.thread_id = thread_id
         self.retry_count = 0
-        self.max_retries = 3  # 增加重试次数
+        self.max_retries = 3
         self.setup_driver()
 
     def setup_driver(self):
@@ -110,7 +93,7 @@ class ThreadSafeSpider:
         edge_options.add_argument('--disable-web-security')
         edge_options.add_argument('--disable-site-isolation-trials')
 
-        # 禁用图片和JavaScript（可选，可显著提高速度）
+        # 禁用图片和JavaScript
         prefs = {
             'profile.default_content_setting_values': {
                 'images': 2,  # 禁用图片
@@ -126,19 +109,19 @@ class ThreadSafeSpider:
             '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0')
 
         try:
-            driver_path = r'D:\work and study\person\数据库\爬虫+数据库\kaoyan_assistant\msedgedriver.exe'
+            driver_path = '../msedgedriver.exe'
             service = Service(driver_path)  # 指定驱动路径
             self.driver = webdriver.Edge(service=service, options=edge_options)
             self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
-            # 增加超时时间
-            self.driver.set_page_load_timeout(35)  # 从30秒增加到60秒
+            # 超时时间
+            self.driver.set_page_load_timeout(35)
             self.driver.set_script_timeout(35)
 
             # 设置隐式等待时间
             self.driver.implicitly_wait(7)
 
-            self.wait = WebDriverWait(self.driver, 10)  # 从10秒增加到20秒
+            self.wait = WebDriverWait(self.driver, 10)
             logging.info(f"线程 {self.thread_id} 浏览器驱动初始化成功")
         except Exception as e:
             logging.error(f"线程 {self.thread_id} 浏览器驱动初始化失败: {e}")
@@ -152,7 +135,7 @@ class ThreadSafeSpider:
         except:
             pass
 
-        time.sleep(5)  # 增加重启等待时间
+        time.sleep(5)  # 重启等待时间
         self.setup_driver()
         self.retry_count += 1
         logging.info(f"线程 {self.thread_id} 浏览器驱动已重启，重试次数: {self.retry_count}")
@@ -183,7 +166,7 @@ class ThreadSafeSpider:
             logging.error(f"线程 {self.thread_id} 数据库连接失败: {e}")
             return None
 
-    def wait_for_element(self, by, value, timeout=10):  # 增加超时时间
+    def wait_for_element(self, by, value, timeout=10):  # 超时时间
         """等待元素出现"""
         try:
             element = WebDriverWait(self.driver, timeout).until(
@@ -193,7 +176,7 @@ class ThreadSafeSpider:
         except TimeoutException:
             return None
 
-    def wait_for_element_clickable(self, by, value, timeout=10):  # 增加超时时间
+    def wait_for_element_clickable(self, by, value, timeout=10):  # 超时时间
         """等待元素可点击"""
         try:
             element = WebDriverWait(self.driver, timeout).until(
@@ -225,14 +208,14 @@ class ThreadSafeSpider:
 
             if major_link:
                 self.driver.get(major_link)
-                time.sleep(3)  # 增加等待时间
+                time.sleep(3)  # 等待时间
                 current_url = self.driver.current_url
                 if "/zsml/dwzy.do" not in current_url:
                     logging.error(f"线程 {self.thread_id} 未能进入专业页面，当前URL: {current_url}")
                     return []
             else:
                 self.driver.get("https://yz.chsi.com.cn/zsml/dw.do")
-                time.sleep(3)  # 增加等待时间
+                time.sleep(3)  # 等待时间
 
                 school_search_input = self.wait_for_element(
                     By.CSS_SELECTOR, "input[placeholder='请输入招生单位名称']"
@@ -250,7 +233,7 @@ class ThreadSafeSpider:
                 )
                 if search_button:
                     search_button.click()
-                    time.sleep(3)  # 增加等待时间
+                    time.sleep(3)  # 等待时间
                 else:
                     logging.error(f"线程 {self.thread_id} 未找到查询按钮")
                     return []
@@ -272,7 +255,7 @@ class ThreadSafeSpider:
                         button_href = major_button.get_attribute("href")
                         if button_href and "http" in button_href:
                             self.driver.get(button_href)
-                            time.sleep(3)  # 增加等待时间
+                            time.sleep(3)  # 等待时间
                     except Exception as e:
                         logging.error(f"线程 {self.thread_id} 进入专业页面失败: {e}")
                         return []
@@ -295,7 +278,7 @@ class ThreadSafeSpider:
                                                                 search_type)
                     if keyword_data:
                         all_majors_data.extend(keyword_data)
-                    time.sleep(2)  # 增加关键词间等待时间
+                    time.sleep(2)  # 等待时间
                 except Exception as e:
                     logging.error(f"线程 {self.thread_id} 搜索关键词 {keyword} 时出错: {e}")
                     continue
@@ -336,13 +319,12 @@ class ThreadSafeSpider:
             time.sleep(3)
 
             try:
-                dropdown = WebDriverWait(self.driver, 10).until(  # 增加等待时间
+                dropdown = WebDriverWait(self.driver, 10).until(  # 等待时间
                     EC.presence_of_element_located((By.CSS_SELECTOR, ".ivu-select-dropdown"))
                 )
 
                 options = dropdown.find_elements(By.CSS_SELECTOR, ".ivu-select-item")
 
-                # 修改：移除选项数量限制，处理所有选项
                 logging.info(f"线程 {self.thread_id} 关键词 '{keyword}' 找到 {len(options)} 个选项，将处理所有选项")
 
                 for i in range(len(options)):
@@ -357,7 +339,7 @@ class ThreadSafeSpider:
                         search_input.send_keys(keyword)
                         time.sleep(3)
 
-                        dropdown = WebDriverWait(self.driver, 10).until(  # 增加等待时间
+                        dropdown = WebDriverWait(self.driver, 10).until(  # 等待时间
                             EC.presence_of_element_located((By.CSS_SELECTOR, ".ivu-select-dropdown"))
                         )
 
@@ -369,7 +351,7 @@ class ThreadSafeSpider:
                             logging.info(f"线程 {self.thread_id} 处理选项 {i + 1}/{len(options)}: {option_text}")
 
                             self.driver.execute_script("arguments[0].click();", current_option)
-                            time.sleep(3)  # 增加等待时间
+                            time.sleep(3)  # 等待时间
 
                             page_data = self.parse_current_page_majors(school_name, keyword, option_text, region,
                                                                        school_features, search_type)
@@ -379,7 +361,7 @@ class ThreadSafeSpider:
                                     f"线程 {self.thread_id} 选项 '{option_text}' 获取到 {len(page_data)} 条数据")
 
                             self.driver.get(original_url)
-                            time.sleep(3)  # 增加等待时间
+                            time.sleep(3)  # 等待时间
 
                     except StaleElementReferenceException:
                         logging.warning(f"线程 {self.thread_id} 选项 {i} 元素失效，跳过")
@@ -401,7 +383,7 @@ class ThreadSafeSpider:
                 )
                 if search_button:
                     search_button.click()
-                    time.sleep(3)  # 增加等待时间
+                    time.sleep(3)  # 等待时间
 
                     page_data = self.parse_current_page_majors(school_name, keyword, keyword, region,
                                                                school_features, search_type)
@@ -410,7 +392,7 @@ class ThreadSafeSpider:
                         logging.info(f"线程 {self.thread_id} 直接搜索获取到 {len(page_data)} 条数据")
 
                     self.driver.get(original_url)
-                    time.sleep(3)  # 增加等待时间
+                    time.sleep(3)  # 等待时间
 
         except Exception as e:
             logging.error(f"线程 {self.thread_id} 搜索专业 {keyword} 失败: {e}")
@@ -429,11 +411,10 @@ class ThreadSafeSpider:
 
         try:
             self.expand_all_major_details()
-            time.sleep(2)  # 增加等待时间
+            time.sleep(2)  # 等待时间
 
             major_items = self.driver.find_elements(By.CSS_SELECTOR, ".zy-item")
 
-            # 修改：移除处理项目数量限制
             logging.info(f"线程 {self.thread_id} 找到 {len(major_items)} 个专业项目，将处理所有项目")
 
             for item in major_items:
@@ -500,7 +481,7 @@ class ThreadSafeSpider:
             "预防医学", "公共卫生与预防医学", "医学影像学", "医学检验技术", "生物医学工程",
             "中西医临床医学", "药学（临床药学）", "麻醉学", "儿科学", "眼视光医学",
             "精神医学", "康复治疗学", "针灸推拿学", "制药工程", "药事管理"
-        ]
+        ]   # 其他专业类可添加
 
         text_lower = text.lower()
         return any(keyword in text_lower for keyword in target_keywords)
@@ -661,7 +642,7 @@ class ThreadSafeSpider:
     def parse_exam_popup_content(self, popup, exam_data):
         """解析考试科目弹出窗口内容"""
         try:
-            # 首先尝试查找kskm-item结构
+            # 查找kskm-item结构
             kskm_items = popup.find_elements(By.CSS_SELECTOR, ".kskm-item")
             if kskm_items:
                 # 取第一个考试科目组合
@@ -1127,7 +1108,7 @@ class ThreadSafeSpider:
                 try:
                     if button.is_displayed() and ("展开" in button.text or "详情" in button.text):
                         self.driver.execute_script("arguments[0].click();", button)
-                        time.sleep(1)  # 增加等待时间
+                        time.sleep(1)  # 等待时间
                         expanded_count += 1
                 except:
                     continue
@@ -1196,7 +1177,7 @@ class ThreadSafeSpider:
 
 
 class CompleteInfoSpider:
-    def __init__(self, username=None, password=None, max_workers=2):  # 默认线程数改为2
+    def __init__(self, username=None, password=None, max_workers=2):  # 默认线程数为2
         self.db_config = {
             'host': 'localhost',
             'user': 'root',
@@ -1614,7 +1595,7 @@ class CompleteInfoSpider:
         temp_spider = ThreadSafeSpider(self.db_config, 0)
         try:
             temp_spider.driver.get("https://yz.chsi.com.cn/zsml/dw.do")
-            time.sleep(5)  # 增加等待时间
+            time.sleep(5)
 
             print("\n=== 可用地区 ===")
             area_items = temp_spider.driver.find_elements(By.CSS_SELECTOR, ".area-item")
@@ -1738,7 +1719,7 @@ class CompleteInfoSpider:
         temp_spider = ThreadSafeSpider(self.db_config, 0)
         try:
             temp_spider.driver.get("https://yz.chsi.com.cn/zsml/dw.do")
-            time.sleep(3)  # 增加等待时间
+            time.sleep(3)
 
             # 选择地区
             area_items = temp_spider.driver.find_elements(By.CSS_SELECTOR, ".area-item")
@@ -1772,7 +1753,7 @@ class CompleteInfoSpider:
             search_button = temp_spider.wait_for_element_clickable(By.CSS_SELECTOR, "button.ivu-btn-primary")
             if search_button:
                 search_button.click()
-                time.sleep(3)  # 增加等待时间
+                time.sleep(3)
 
             schools = []
             school_items = temp_spider.driver.find_elements(By.CSS_SELECTOR, ".zy-item")
@@ -1818,7 +1799,7 @@ class CompleteInfoSpider:
         temp_spider = ThreadSafeSpider(self.db_config, 0)
         try:
             temp_spider.driver.get("https://yz.chsi.com.cn/zsml/dw.do")
-            time.sleep(3)  # 增加等待时间
+            time.sleep(3)
 
             school_search_input = temp_spider.wait_for_element(
                 By.CSS_SELECTOR, "input[placeholder='请输入招生单位名称']"
@@ -1836,7 +1817,7 @@ class CompleteInfoSpider:
             )
             if search_button:
                 search_button.click()
-                time.sleep(3)  # 增加等待时间
+                time.sleep(3)  # 等待时间
             else:
                 logging.error("未找到查询按钮")
                 return None
@@ -1951,9 +1932,38 @@ class CompleteInfoSpider:
         """清理资源"""
         pass
 
+    def delete_region_data(self, region):
+        """删除指定地区的数据"""
+        connection = self.get_db_connection()
+        if not connection:
+            return False
+
+        try:
+            cursor = connection.cursor()
+
+            # 删除exam_subjects表中该地区的数据
+            query = "DELETE FROM exam_subjects WHERE region = %s AND search_type = 'region'"
+            cursor.execute(query, (region,))
+
+            # 删除crawl_progress表中该地区的记录
+            query = "DELETE FROM crawl_progress WHERE region = %s AND search_type = 'region'"
+            cursor.execute(query, (region,))
+
+            connection.commit()
+            logging.info(f"已删除地区 {region} 的所有数据")
+            return True
+        except Error as e:
+            logging.error(f"删除地区数据失败: {e}")
+            connection.rollback()
+            return False
+        finally:
+            if connection.is_connected():
+                cursor.close()
+                connection.close()
+
 
 class ShanghaiRankingSpider:
-    """软科排名爬虫类 - 使用指定路径的Edge驱动"""
+    """软科排名爬虫类 - 使用指定路径的Edge驱动，动态获取学科列表"""
 
     def __init__(self, headless=False):
         # 数据库配置
@@ -1970,70 +1980,15 @@ class ShanghaiRankingSpider:
         self.wait = None
 
         # 指定Edge驱动路径
-        self.edge_driver_path = r"D:\work and study\person\数据库\爬虫+数据库\msedgedriver.exe"
+        self.edge_driver_path = r"D:\work and study\person\数据库\爬虫+数据库\kaoyan_assistant\msedgedriver.exe"
 
+        # 学科数据（动态获取）
+        self.all_subjects = {}  # 完整的学科数据结构
+        self.subjects_2025 = {}  # 向后兼容的格式
+        self.subject_mapping = {}  # 用于交互选择的映射
+
+        # 初始化浏览器驱动
         self.setup_driver()
-
-        # 学科定义
-        self.subjects_2025 = {
-            # 理学 (07)
-            '07': [
-                ('0701', '数学'),
-                ('0702', '物理学'),
-                ('0703', '化学'),
-                ('0704', '天文学'),
-                ('0705', '地理学'),
-                ('0706', '大气科学'),
-                ('0707', '海洋科学'),
-                ('0708', '地球物理学'),
-                ('0709', '地质学'),
-                ('0710', '生物学'),
-                ('0711', '系统科学'),
-                ('0712', '科学技术史'),
-                ('0713', '生态学'),
-                ('0714', '统计学'),
-            ],
-            # 工学 (08)
-            '08': [
-                ('0801', '力学'),
-                ('0802', '机械工程'),
-                ('0803', '光学工程'),
-                ('0804', '仪器科学与技术'),
-                ('0805', '材料科学与工程'),
-                ('0806', '冶金工程'),
-                ('0807', '动力工程及工程热物理'),
-                ('0808', '电气工程'),
-                ('0809', '电子科学与技术'),
-                ('0810', '信息与通信工程'),
-                ('0811', '控制科学与工程'),
-                ('0812', '计算机科学与技术'),
-                ('0813', '建筑学'),
-                ('0814', '土木工程'),
-                ('0815', '水利工程'),
-                ('0816', '测绘科学与技术'),
-                ('0817', '化学工程与技术'),
-                ('0818', '地质资源与地质工程'),
-                ('0819', '矿业工程'),
-                ('0820', '石油与天然气工程'),
-                ('0821', '纺织科学与工程'),
-                ('0822', '轻工技术与工程'),
-                ('0823', '交通运输工程'),
-                ('0824', '船舶与海洋工程'),
-                ('0825', '航空宇航科学与技术'),
-                ('0826', '兵器科学与技术'),
-                ('0827', '核科学与技术'),
-                ('0828', '农业工程'),
-                ('0829', '林业工程'),
-                ('0830', '环境科学与工程'),
-                ('0831', '生物医学工程'),
-                ('0832', '食品科学与工程'),
-                ('0833', '城乡规划学'),
-                ('0835', '软件工程'),
-                ('0836', '生物工程'),
-                ('0837', '安全科学与工程'),
-                ('0839', '网络空间安全'),
-            ]
-        }
 
         # 创建数据库表
         self.create_tables()
@@ -2157,13 +2112,20 @@ class ShanghaiRankingSpider:
             if table_exists:
                 # 检查表结构是否包含ranking_position_2025列
                 try:
+                    # 先关闭当前结果集
+                    cursor.fetchall()  # 确保之前的结果被完全读取
+
                     cursor.execute("SELECT ranking_position_2025 FROM shanghai_subject_rankings LIMIT 1")
+                    cursor.fetchall()  # 读取结果
                     logging.info("表结构正确，无需重建")
                 except mysql.connector.Error:
                     # 表存在但结构不对，删除重建
                     logging.info("表结构不正确，删除重建...")
                     cursor.execute("DROP TABLE IF EXISTS shanghai_subject_rankings")
                     connection.commit()
+            else:
+                # 确保结果被读取
+                cursor.fetchall()
 
             # 创建学科排名表（如果不存在）
             cursor.execute("""
@@ -2201,6 +2163,147 @@ class ShanghaiRankingSpider:
             if connection.is_connected():
                 cursor.close()
                 connection.close()
+
+    def fetch_all_subjects_from_web(self, url="https://www.shanghairanking.cn/rankings/bcsr/2025"):
+        """
+        从软科排名页面动态爬取所有学科信息
+        返回格式: {'学科大类代码': {'category_name': '大类名称', 'subjects': [('学科代码', '学科名称'), ...]}, ...}
+        """
+        logging.info(f"开始从网页爬取所有学科信息: {url}")
+
+        try:
+            # 导航到学科列表页面
+            self.driver.get(url)
+            time.sleep(5)  # 等待页面加载
+
+            # 等待学科容器加载
+            subject_container = self.wait_for_element(By.CSS_SELECTOR, ".subject-container", timeout=15)
+            if not subject_container:
+                logging.error("未找到学科容器")
+                return {}
+
+            # 解析所有学科大类
+            subject_items = subject_container.find_elements(By.CSS_SELECTOR, ".subject-item")
+            all_subjects = {}
+
+            for item in subject_items:
+                try:
+                    # 获取学科大类信息
+                    category_code = item.get_attribute("id")  # 例如 "01", "02", ...
+
+                    # 获取学科大类名称
+                    category_title_elem = item.find_element(By.CSS_SELECTOR, ".subject-title")
+                    category_name = category_title_elem.text.strip() if category_title_elem else f"类别{category_code}"
+
+                    # 获取该大类下的所有具体学科
+                    subject_list = item.find_element(By.CSS_SELECTOR, ".subject-list")
+                    subject_links = subject_list.find_elements(By.CSS_SELECTOR, ".subj-link")
+
+                    subjects_in_category = []
+                    for link in subject_links:
+                        try:
+                            # 学科代码和名称在span标签内
+                            spans = link.find_elements(By.TAG_NAME, "span")
+                            if len(spans) >= 2:
+                                subject_code = spans[0].text.strip()
+                                subject_name = spans[1].text.strip()
+
+                                if subject_code and subject_name:
+                                    subjects_in_category.append((subject_code, subject_name))
+                        except Exception as e:
+                            logging.debug(f"解析学科链接失败: {e}")
+                            continue
+
+                    if subjects_in_category:
+                        all_subjects[category_code] = {
+                            'category_name': category_name,
+                            'subjects': subjects_in_category
+                        }
+                        logging.info(f"类别 {category_code}-{category_name}: 找到 {len(subjects_in_category)} 个学科")
+
+                except Exception as e:
+                    logging.debug(f"解析学科大类失败: {e}")
+                    continue
+
+            # 更新实例变量
+            self.all_subjects = all_subjects
+            self.subjects_2025 = {cat_code: cat_info['subjects'] for cat_code, cat_info in all_subjects.items()}
+
+            # 生成学科映射（用于交互选择）
+            self.generate_subject_mapping()
+
+            total_subjects = sum(len(cat_info['subjects']) for cat_info in all_subjects.values())
+            logging.info(f"成功爬取 {len(all_subjects)} 个学科大类，共 {total_subjects} 个具体学科")
+
+            return all_subjects
+
+        except Exception as e:
+            logging.error(f"爬取学科信息失败: {e}")
+            return {}
+
+    def generate_subject_mapping(self):
+        """生成学科编号映射，用于交互式选择"""
+        if not self.all_subjects:
+            return {}
+
+        self.subject_mapping = {}
+        subject_index = 1
+
+        # 按类别代码排序
+        sorted_categories = sorted(self.all_subjects.items(), key=lambda x: x[0])
+
+        for category_code, category_info in sorted_categories:
+            category_name = category_info['category_name']
+            subjects = category_info['subjects']
+
+            for subject_code, subject_name in subjects:
+                self.subject_mapping[subject_index] = (subject_code, subject_name, category_code, category_name)
+                subject_index += 1
+
+        return self.subject_mapping
+
+    def display_all_subjects(self, refresh=False):
+        """
+        显示所有爬取到的学科信息，供用户选择
+        refresh: 是否重新从网页获取学科列表
+        """
+        if refresh or not self.all_subjects:
+            print("正在从软科官网获取最新学科列表...")
+            self.fetch_all_subjects_from_web()
+
+        if not self.all_subjects:
+            print("未获取到学科信息")
+            return {}
+
+        print("\n" + "=" * 60)
+        print("软科2025学科排名 - 所有可用学科")
+        print("=" * 60)
+
+        # 确保有学科映射
+        if not self.subject_mapping:
+            self.generate_subject_mapping()
+
+        # 按类别代码排序
+        sorted_categories = sorted(self.all_subjects.items(), key=lambda x: x[0])
+
+        for category_code, category_info in sorted_categories:
+            category_name = category_info['category_name']
+            subjects = category_info['subjects']
+
+            print(f"\n【{category_code}】{category_name}")
+
+            for subject_code, subject_name in subjects:
+                # 找到对应的编号
+                for idx, mapping in self.subject_mapping.items():
+                    if mapping[0] == subject_code and mapping[1] == subject_name:
+                        print(f"  {idx:3d}. [{subject_code}] {subject_name}")
+                        break
+
+        total_subjects = len(self.subject_mapping)
+        print(f"\n共 {total_subjects} 个学科")
+        print("=" * 60)
+
+        return self.subject_mapping
 
     def clean_school_name(self, school_name):
         """清理学校名称"""
@@ -2561,12 +2664,6 @@ class ShanghaiRankingSpider:
             logging.info(f"表头信息: {headers}")
 
             # 根据表头确定列索引 - 简化逻辑
-            # 从HTML结构看，列顺序是固定的：
-            # 第0列: 2025排名
-            # 第1列: 2024排名（可能带灰色样式）
-            # 第2列: 层次信息
-            # 第3列: 学校名称
-            # 第4列: 总分
             col_indices = {
                 'rank_2025': 0,  # 固定第0列是2025排名
                 'rank_2024': 1,  # 固定第1列是2024排名
@@ -2640,7 +2737,35 @@ class ShanghaiRankingSpider:
                     score_2024 = 0.0
 
                     # 确定学科类别
-                    subject_category = "理学" if subject_code.startswith('07') else "工学"
+                    subject_category = ""
+                    if subject_code.startswith('01'):
+                        subject_category = "哲学"
+                    elif subject_code.startswith('02'):
+                        subject_category = "经济学"
+                    elif subject_code.startswith('03'):
+                        subject_category = "法学"
+                    elif subject_code.startswith('04'):
+                        subject_category = "教育学"
+                    elif subject_code.startswith('05'):
+                        subject_category = "文学"
+                    elif subject_code.startswith('06'):
+                        subject_category = "历史学"
+                    elif subject_code.startswith('07'):
+                        subject_category = "理学"
+                    elif subject_code.startswith('08'):
+                        subject_category = "工学"
+                    elif subject_code.startswith('09'):
+                        subject_category = "农学"
+                    elif subject_code.startswith('10'):
+                        subject_category = "医学"
+                    elif subject_code.startswith('12'):
+                        subject_category = "管理学"
+                    elif subject_code.startswith('13'):
+                        subject_category = "艺术学"
+                    elif subject_code.startswith('14'):
+                        subject_category = "交叉学科"
+                    else:
+                        subject_category = "其他"
 
                     data_rows.append({
                         'year': 2025,  # 主年份为2025
@@ -2881,65 +3006,6 @@ class ShanghaiRankingSpider:
 
         return data
 
-    def test_pagination(self, subject_code='0701', subject_name='数学'):
-        """测试分页有效性"""
-        print(f"\n测试 {subject_name} 分页有效性 ({subject_code})")
-
-        try:
-            # 导航到学科页面
-            if not self.navigate_to_subject_page(subject_code):
-                print("无法访问页面")
-                return False
-
-            # 获取第一页数据
-            print("获取第1页数据...")
-            page1_data = self.parse_current_page(subject_code, subject_name, 1)
-
-            if not page1_data:
-                print("无法获取第1页数据")
-                return False
-
-            print(f"第1页获取到 {len(page1_data)} 条数据")
-            if page1_data:
-                print(f"第1页第一条: 排名2025:{page1_data[0]['ranking_position_2025']}, "
-                      f"排名2024:{page1_data[0]['ranking_position_2024']}, "
-                      f"{page1_data[0]['school_name']}")
-
-            # 尝试跳转到第2页
-            print("\n尝试跳转到第2页...")
-            if self.go_to_page(2):
-                # 等待页面加载
-                time.sleep(3)
-
-                # 获取第2页数据
-                page2_data = self.parse_current_page(subject_code, subject_name, 2)
-
-                if page2_data:
-                    print(f"第2页获取到 {len(page2_data)} 条数据")
-                    if page2_data:
-                        print(f"第2页第一条: 排名2025:{page2_data[0]['ranking_position_2025']}, "
-                              f"排名2024:{page2_data[0]['ranking_position_2024']}, "
-                              f"{page2_data[0]['school_name']}")
-
-                    # 比较数据
-                    if page1_data and page2_data:
-                        if (page1_data[0]['school_name'] == page2_data[0]['school_name']):
-                            print("  ⚠ 警告：两页数据相同，分页可能无效！")
-                            return False
-                        else:
-                            print("  ✓ 两页数据不同，分页成功！")
-                            return True
-                else:
-                    print("无法获取第2页数据")
-                    return False
-            else:
-                print("无法跳转到第2页")
-                return False
-
-        except Exception as e:
-            print(f"分页测试失败: {e}")
-            return False
-
     def export_to_excel(self):
         """导出数据到Excel"""
         print("\n导出数据到Excel...")
@@ -2997,7 +3063,7 @@ class ShanghaiRankingSpider:
                 connection.close()
 
     def clear_database(self):
-        """清除数据库中的数据"""
+        """清除数据库中的所有软科排名数据"""
         print("\n清除数据库中的数据...")
 
         confirm = input("确认清除所有软科排名数据？此操作不可恢复！(输入 'yes' 确认): ").strip()
@@ -3035,6 +3101,45 @@ class ShanghaiRankingSpider:
                 cursor.close()
                 connection.close()
 
+    def delete_subject_data(self, subject_name):
+        """删除指定学科的数据"""
+        connection = self.get_db_connection()
+        if not connection:
+            return False
+
+        try:
+            cursor = connection.cursor()
+
+            # 获取当前数据统计
+            cursor.execute("SELECT COUNT(*) as count FROM shanghai_subject_rankings WHERE subject_name = %s",
+                           (subject_name,))
+            subject_count = cursor.fetchone()[0]
+
+            if subject_count == 0:
+                print(f"学科 '{subject_name}' 没有数据可删除")
+                return True
+
+            confirm = input(f"确认删除学科 '{subject_name}' 的所有 {subject_count} 条数据吗？(y/n): ").strip().lower()
+            if confirm != 'y':
+                print("已取消删除操作")
+                return False
+
+            # 执行删除
+            cursor.execute("DELETE FROM shanghai_subject_rankings WHERE subject_name = %s", (subject_name,))
+            connection.commit()
+
+            print(f"成功删除学科 '{subject_name}' 的 {subject_count} 条数据")
+            return True
+
+        except Error as e:
+            print(f"删除学科数据失败: {e}")
+            connection.rollback()
+            return False
+        finally:
+            if connection.is_connected():
+                cursor.close()
+                connection.close()
+
     def close_driver(self):
         """关闭WebDriver"""
         if self.driver:
@@ -3043,6 +3148,20 @@ class ShanghaiRankingSpider:
                 logging.info("WebDriver已关闭")
             except:
                 pass
+
+    def get_subject_by_index(self, index):
+        """根据索引获取学科信息"""
+        if index in self.subject_mapping:
+            return self.subject_mapping[index]
+        return None
+
+    def get_subject_count(self):
+        """获取学科总数"""
+        return len(self.subject_mapping)
+
+    def get_category_count(self):
+        """获取学科大类总数"""
+        return len(self.all_subjects)
 
 
 def get_db_connection():
@@ -4229,6 +4348,373 @@ def data_query_page():
                     connection.close()
 
 
+# ==================== 交互式命令行界面函数 ====================
+
+def interactive_crawler_ui():
+    """交互式爬虫界面"""
+    print("=" * 60)
+    print("欢迎使用考研数据爬虫系统")
+    print("=" * 60)
+
+    while True:
+        print("\n请选择操作：")
+        print("1. 按地区搜索爬取考研专业信息")
+        print("2. 按学校搜索爬取考研专业信息")
+        print("3. 运行软科排名爬虫")
+        print("4. 删除数据")
+        print("5. 退出")
+
+        choice = input("请输入选项 (1-5): ").strip()
+
+        if choice == "1":
+            crawl_by_region()
+        elif choice == "2":
+            crawl_by_school()
+        elif choice == "3":
+            crawl_shanghai_ranking()
+        elif choice == "4":
+            delete_data()
+        elif choice == "5":
+            print("感谢使用，再见！")
+            break
+        else:
+            print("无效选项，请重新输入")
+
+
+def crawl_by_region():
+    """按地区爬取"""
+    print("\n=== 按地区爬取考研专业信息 ===")
+    spider = CompleteInfoSpider()
+
+    # 选择地区和院校特性
+    regions, features = spider.select_region_and_features()
+
+    if not regions:
+        print("未选择任何地区，返回主菜单")
+        return
+
+    print(f"\n已选择地区: {regions}")
+    print(f"已选择院校特性: {features}")
+
+    # 确认开始爬取
+    confirm = input("确认开始爬取吗？(y/n): ").strip().lower()
+    if confirm != 'y':
+        print("已取消爬取")
+        return
+
+    # 开始爬取
+    print("\n开始爬取...")
+    spider.crawl_by_regions_and_features(regions, features)
+    print(f"\n爬取完成！数据已保存到数据库和Excel文件: {spider.excel_filename}")
+
+
+def crawl_by_school():
+    """按学校爬取"""
+    print("\n=== 按学校爬取考研专业信息 ===")
+    spider = CompleteInfoSpider()
+
+    # 选择学校
+    school_names = spider.select_schools_by_name()
+
+    if not school_names:
+        print("未输入任何学校名称，返回主菜单")
+        return
+
+    print(f"\n已选择学校: {school_names}")
+
+    # 确认开始爬取
+    confirm = input("确认开始爬取吗？(y/n): ").strip().lower()
+    if confirm != 'y':
+        print("已取消爬取")
+        return
+
+    # 开始爬取
+    print("\n开始爬取...")
+    spider.crawl_by_school_names(school_names)
+    print(f"\n爬取完成！数据已保存到数据库和Excel文件: {spider.excel_filename}")
+
+
+def crawl_shanghai_ranking():
+    """爬取软科排名 - 改进版：先动态获取学科列表"""
+    print("\n=== 爬取软科排名 ===")
+
+    # 创建爬虫实例
+    spider = ShanghaiRankingSpider(headless=True)
+
+    try:
+        # 第一步：动态获取所有学科信息
+        print("\n正在从软科官网获取学科列表...")
+        subjects_data = spider.fetch_all_subjects_from_web()
+
+        if not subjects_data:
+            print("获取学科列表失败，请检查网络连接或网站结构是否变化")
+            return
+
+        # 显示所有学科供选择
+        subject_mapping = spider.display_all_subjects(subjects_data)
+
+        if not subject_mapping:
+            print("未找到可用学科")
+            return
+
+        # 第二步：让用户选择爬取模式
+        print("\n请选择爬取模式：")
+        print("1. 选择特定学科爬取")
+        print("2. 爬取所有学科（耗时较长）")
+        print("3. 按学科类别爬取")
+        print("4. 返回主菜单")
+
+        mode = input("\n请输入选项 (1-4): ").strip()
+
+        if mode == "1":
+            # 选择特定学科
+            while True:
+                selection = input("\n请输入要爬取的学科编号（多个用逗号分隔，0返回）: ").strip()
+
+                if selection == "0":
+                    print("返回主菜单")
+                    return
+
+                try:
+                    selected_indices = [int(idx.strip()) for idx in selection.split(',') if idx.strip().isdigit()]
+                    valid_indices = [idx for idx in selected_indices if 1 <= idx <= len(subject_mapping)]
+
+                    if not valid_indices:
+                        print("无效的编号，请重新输入")
+                        continue
+
+                    # 显示选择的学科
+                    selected_subjects = []
+                    for idx in valid_indices:
+                        subject_code, subject_name, category_code, category_name = subject_mapping[idx]
+                        selected_subjects.append((subject_code, subject_name))
+                        print(f"  - {subject_code} {subject_name}")
+
+                    # 确认爬取
+                    confirm = input(f"\n确认爬取以上 {len(selected_subjects)} 个学科吗？(y/n): ").strip().lower()
+                    if confirm != 'y':
+                        print("已取消爬取")
+                        continue
+
+                    # 开始爬取选中的学科
+                    print("\n开始爬取...")
+                    all_data = []
+
+                    for i, (subject_code, subject_name) in enumerate(selected_subjects):
+                        print(f"\n[{i + 1}/{len(selected_subjects)}] 爬取学科: {subject_name} ({subject_code})")
+                        data = spider.fetch_subject_data(subject_code, subject_name, max_pages=3)
+                        if data:
+                            spider.save_subject_rankings_to_db(data)
+                            all_data.extend(data)
+                            print(f"  已爬取 {len(data)} 条数据")
+                        else:
+                            print(f"  未获取到数据")
+
+                        # 避免请求过快，最后一个不需要等待
+                        if i < len(selected_subjects) - 1:
+                            delay = random.uniform(3, 8)
+                            print(f"  等待 {delay:.1f} 秒后继续...")
+                            time.sleep(delay)
+
+                    print(f"\n爬取完成，共获取 {len(all_data)} 条数据")
+                    break
+
+                except ValueError:
+                    print("输入格式错误，请重新输入")
+
+        elif mode == "2":
+            # 爬取所有学科
+            total_subjects = len(subject_mapping)
+            print(f"\n警告：将爬取全部 {total_subjects} 个学科，这可能需要很长时间！")
+
+            confirm = input("确认爬取所有学科吗？(y/n): ").strip().lower()
+            if confirm != 'y':
+                print("已取消爬取")
+                return
+
+            # 开始爬取所有学科
+            print("\n开始爬取所有学科...")
+            all_data = []
+            current = 1
+
+            for idx in range(1, total_subjects + 1):
+                subject_code, subject_name, category_code, category_name = subject_mapping[idx]
+                print(f"\n[{current}/{total_subjects}] 爬取学科: {subject_name} ({subject_code})")
+
+                data = spider.fetch_subject_data(subject_code, subject_name, max_pages=2)  # 所有学科只爬前2页
+                if data:
+                    spider.save_subject_rankings_to_db(data)
+                    all_data.extend(data)
+                    print(f"  已爬取 {len(data)} 条数据")
+                else:
+                    print(f"  未获取到数据")
+
+                current += 1
+
+                # 避免请求过快
+                if current <= total_subjects:
+                    delay = random.uniform(5, 10)
+                    print(f"  等待 {delay:.1f} 秒后继续...")
+                    time.sleep(delay)
+
+            print(f"\n所有学科爬取完成，共获取 {len(all_data)} 条数据")
+
+        elif mode == "3":
+            # 按学科类别爬取
+            print("\n请选择学科类别：")
+
+            # 获取所有类别
+            categories = {}
+            for category_code, category_info in subjects_data.items():
+                categories[category_code] = category_info['category_name']
+
+            # 显示类别
+            sorted_cat_codes = sorted(categories.keys())
+            for i, cat_code in enumerate(sorted_cat_codes, 1):
+                print(f"{i:2d}. [{cat_code}] {categories[cat_code]}")
+
+            print("0. 返回")
+
+            while True:
+                cat_selection = input("\n请输入类别编号（多个用逗号分隔）: ").strip()
+
+                if cat_selection == "0":
+                    print("返回")
+                    break
+
+                try:
+                    selected_cat_indices = [int(idx.strip()) for idx in cat_selection.split(',') if
+                                            idx.strip().isdigit()]
+                    valid_cat_indices = [idx for idx in selected_cat_indices if 1 <= idx <= len(categories)]
+
+                    if not valid_cat_indices:
+                        print("无效的编号，请重新输入")
+                        continue
+
+                    # 获取选中的类别
+                    selected_categories = []
+                    cat_keys = list(categories.keys())
+                    for idx in valid_cat_indices:
+                        cat_code = cat_keys[idx - 1]
+                        cat_name = categories[cat_code]
+                        selected_categories.append((cat_code, cat_name))
+
+                    # 显示选中的类别和包含的学科
+                    total_subjects_in_cats = 0
+                    for cat_code, cat_name in selected_categories:
+                        subjects_in_cat = subjects_data[cat_code]['subjects']
+                        total_subjects_in_cats += len(subjects_in_cat)
+                        print(f"\n类别 [{cat_code}] {cat_name}: {len(subjects_in_cat)} 个学科")
+                        for subj_code, subj_name in subjects_in_cat:
+                            print(f"  - {subj_code} {subj_name}")
+
+                    # 确认爬取
+                    confirm = input(
+                        f"\n确认爬取以上 {len(selected_categories)} 个类别共 {total_subjects_in_cats} 个学科吗？(y/n): ").strip().lower()
+                    if confirm != 'y':
+                        print("已取消爬取")
+                        continue
+
+                    # 开始爬取
+                    print("\n开始爬取...")
+                    all_data = []
+                    total_processed = 0
+
+                    for cat_code, cat_name in selected_categories:
+                        print(f"\n=== 爬取类别: {cat_name} ===")
+                        subjects_in_cat = subjects_data[cat_code]['subjects']
+
+                        for i, (subject_code, subject_name) in enumerate(subjects_in_cat):
+                            total_processed += 1
+                            print(f"\n[{total_processed}/{total_subjects_in_cats}] {subject_name} ({subject_code})")
+
+                            data = spider.fetch_subject_data(subject_code, subject_name, max_pages=2)
+                            if data:
+                                spider.save_subject_rankings_to_db(data)
+                                all_data.extend(data)
+                                print(f"  已爬取 {len(data)} 条数据")
+                            else:
+                                print(f"  未获取到数据")
+
+                            # 避免请求过快
+                            if total_processed < total_subjects_in_cats:
+                                delay = random.uniform(4, 8)
+                                print(f"  等待 {delay:.1f} 秒后继续...")
+                                time.sleep(delay)
+
+                    print(f"\n爬取完成，共获取 {len(all_data)} 条数据")
+                    break
+
+                except ValueError:
+                    print("输入格式错误，请重新输入")
+
+        elif mode == "4":
+            print("返回主菜单")
+
+        else:
+            print("无效选项，返回主菜单")
+
+    except Exception as e:
+        print(f"爬取过程中出现错误: {e}")
+        import traceback
+        traceback.print_exc()
+
+    finally:
+        spider.close_driver()
+
+
+def delete_data():
+    """删除数据"""
+    print("\n=== 删除数据 ===")
+
+    print("\n请选择删除类型：")
+    print("1. 按地区删除考研专业信息")
+    print("2. 按学校删除考研专业信息")
+    print("3. 按学科删除软科排名")
+    print("4. 清空所有软科排名数据")
+    print("5. 返回主菜单")
+
+    choice = input("请输入选项 (1-5): ").strip()
+
+    if choice == "1":
+        # 按地区删除
+        region = input("请输入要删除的地区名称: ").strip()
+        if region:
+            spider = CompleteInfoSpider()
+            if spider.delete_region_data(region):
+                print(f"成功删除地区 '{region}' 的所有数据")
+            else:
+                print(f"删除地区 '{region}' 数据失败")
+
+    elif choice == "2":
+        # 按学校删除
+        school_name = input("请输入要删除的学校名称: ").strip()
+        if school_name:
+            spider = CompleteInfoSpider()
+            if spider.delete_school_data(school_name, 'school'):
+                print(f"成功删除学校 '{school_name}' 的所有数据")
+            else:
+                print(f"删除学校 '{school_name}' 数据失败")
+
+    elif choice == "3":
+        # 按学科删除软科排名
+        subject_name = input("请输入要删除的学科名称: ").strip()
+        if subject_name:
+            spider = ShanghaiRankingSpider()
+            spider.delete_subject_data(subject_name)
+
+    elif choice == "4":
+        # 清空所有软科排名数据
+        spider = ShanghaiRankingSpider()
+        spider.clear_database()
+
+    elif choice == "5":
+        print("返回主菜单")
+
+    else:
+        print("无效选项，返回主菜单")
+
+
 def main():
     """主函数"""
     # 检查MySQL是否可用
@@ -4267,5 +4753,68 @@ def main():
             st.rerun()
 
 
+# ==================== 入口点判断 ====================
+
+def is_running_in_streamlit():
+    """检查是否在Streamlit环境中运行"""
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+        return get_script_run_ctx() is not None
+    except:
+        # 如果无法导入，说明不在Streamlit环境中
+        return False
+
+
+def streamlit_main():
+    """Streamlit应用的入口函数"""
+    # 检查MySQL是否可用
+    if 'MYSQL_AVAILABLE' not in globals():
+        global MYSQL_AVAILABLE
+        MYSQL_AVAILABLE = True
+
+    # 初始化数据库
+    if 'db_initialized' not in st.session_state:
+        if init_database():
+            st.session_state.db_initialized = True
+        else:
+            st.error("数据库初始化失败，请检查数据库连接")
+            return
+
+    # 页面路由
+    if 'page' not in st.session_state:
+        st.session_state.page = "login"
+
+    # 根据当前页面显示相应内容
+    if st.session_state.page == "login":
+        login_page()
+    elif st.session_state.page == "register":
+        register_page()
+    elif st.session_state.page == "main":
+        if 'user' in st.session_state:
+            main_page()
+        else:
+            st.session_state.page = "login"
+            st.rerun()
+    elif st.session_state.page == "data_query":
+        if 'user' in st.session_state:
+            data_query_page()
+        else:
+            st.session_state.page = "login"
+            st.rerun()
+
+
+def command_line_main():
+    """命令行爬虫工具的入口函数"""
+    interactive_crawler_ui()
+
+
+# ==================== 主程序入口 ====================
+
 if __name__ == "__main__":
-    main()
+    # 自动检测运行环境
+    if is_running_in_streamlit():
+        # Streamlit环境：运行Web应用
+        streamlit_main()
+    else:
+        # 命令行环境：运行爬虫工具
+        command_line_main()
