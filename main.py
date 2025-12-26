@@ -1,6 +1,6 @@
 # main.py
 import mysql.connector
-from mysql.connector import Error
+from mysql.connector import Error as MySQLError
 from selenium.webdriver.edge.service import Service
 from selenium.webdriver.edge.options import Options
 from selenium.common.exceptions import InvalidSessionIdException, WebDriverException
@@ -20,11 +20,12 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.edge.options import Options as EdgeOptions
-from selenium.webdriver.edge.service import Service as EdgeService
 from selenium.webdriver.common.keys import Keys
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException
 import streamlit as st
+import hashlib
+import pymysql
+from pymysql.cursors import DictCursor
 
 # 设置页面配置 - 必须在最前面！
 st.set_page_config(
@@ -33,11 +34,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
-import hashlib
-import pymysql
-from pymysql import Error
-from pymysql.cursors import DictCursor
 
 # 配置日志
 logging.basicConfig(
@@ -58,12 +54,19 @@ if sys.stdout.encoding != 'utf-8':
 
         sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer)
 
+# 全局数据库配置
+DB_CONFIG = {
+    'host': 'localhost',
+    'user': 'root',
+    'password': 'your_password',
+    'database': 'kaoyan_data'
+}
+
 
 class ThreadSafeSpider:
     """线程安全的爬虫类，每个线程有自己的浏览器实例"""
 
-    def __init__(self, db_config, thread_id=0):
-        self.db_config = db_config
+    def __init__(self, thread_id=0):
         self.thread_id = thread_id
         self.retry_count = 0
         self.max_retries = 3
@@ -82,16 +85,12 @@ class ThreadSafeSpider:
         edge_options.add_argument('--disable-background-timer-throttling')
         edge_options.add_argument('--disable-backgrounding-occluded-windows')
         edge_options.add_argument('--disable-renderer-backgrounding')
-        edge_options.add_argument('--no-first-run')
-        edge_options.add_argument('--no-default-browser-check')
 
         # 性能优化设置
         edge_options.add_argument('--disable-blink-features=AutomationControlled')
         edge_options.add_argument('--disable-features=VizDisplayCompositor')
         edge_options.add_argument('--disable-software-rasterizer')
-        edge_options.add_argument('--disable-dev-shm-usage')
         edge_options.add_argument('--disable-web-security')
-        edge_options.add_argument('--disable-site-isolation-trials')
 
         # 禁用图片和JavaScript
         prefs = {
@@ -109,7 +108,7 @@ class ThreadSafeSpider:
             '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0')
 
         try:
-            driver_path = '../msedgedriver.exe'
+            driver_path = 'msedgedriver.exe'
             service = Service(driver_path)  # 指定驱动路径
             self.driver = webdriver.Edge(service=service, options=edge_options)
             self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
@@ -135,7 +134,7 @@ class ThreadSafeSpider:
         except:
             pass
 
-        time.sleep(5)  # 重启等待时间
+        time.sleep(5)
         self.setup_driver()
         self.retry_count += 1
         logging.info(f"线程 {self.thread_id} 浏览器驱动已重启，重试次数: {self.retry_count}")
@@ -148,7 +147,7 @@ class ThreadSafeSpider:
             if self.retry_count < self.max_retries:
                 logging.warning(f"线程 {self.thread_id} 浏览器会话失效或超时，准备重启: {e}")
                 self.restart_driver()
-                time.sleep(3)  # 重启后等待
+                time.sleep(3)
                 return self.safe_execute(func, *args, **kwargs)
             else:
                 logging.error(f"线程 {self.thread_id} 达到最大重试次数，放弃操作")
@@ -157,16 +156,7 @@ class ThreadSafeSpider:
             logging.error(f"线程 {self.thread_id} 执行函数时出错: {e}")
             raise
 
-    def get_db_connection(self):
-        """获取数据库连接"""
-        try:
-            connection = mysql.connector.connect(**self.db_config)
-            return connection
-        except Error as e:
-            logging.error(f"线程 {self.thread_id} 数据库连接失败: {e}")
-            return None
-
-    def wait_for_element(self, by, value, timeout=10):  # 超时时间
+    def wait_for_element(self, by, value, timeout=10):
         """等待元素出现"""
         try:
             element = WebDriverWait(self.driver, timeout).until(
@@ -176,7 +166,7 @@ class ThreadSafeSpider:
         except TimeoutException:
             return None
 
-    def wait_for_element_clickable(self, by, value, timeout=10):  # 超时时间
+    def wait_for_element_clickable(self, by, value, timeout=10):
         """等待元素可点击"""
         try:
             element = WebDriverWait(self.driver, timeout).until(
@@ -208,14 +198,14 @@ class ThreadSafeSpider:
 
             if major_link:
                 self.driver.get(major_link)
-                time.sleep(3)  # 等待时间
+                time.sleep(3)
                 current_url = self.driver.current_url
                 if "/zsml/dwzy.do" not in current_url:
                     logging.error(f"线程 {self.thread_id} 未能进入专业页面，当前URL: {current_url}")
                     return []
             else:
                 self.driver.get("https://yz.chsi.com.cn/zsml/dw.do")
-                time.sleep(3)  # 等待时间
+                time.sleep(3)
 
                 school_search_input = self.wait_for_element(
                     By.CSS_SELECTOR, "input[placeholder='请输入招生单位名称']"
@@ -233,7 +223,7 @@ class ThreadSafeSpider:
                 )
                 if search_button:
                     search_button.click()
-                    time.sleep(3)  # 等待时间
+                    time.sleep(3)
                 else:
                     logging.error(f"线程 {self.thread_id} 未找到查询按钮")
                     return []
@@ -255,7 +245,7 @@ class ThreadSafeSpider:
                         button_href = major_button.get_attribute("href")
                         if button_href and "http" in button_href:
                             self.driver.get(button_href)
-                            time.sleep(3)  # 等待时间
+                            time.sleep(3)
                     except Exception as e:
                         logging.error(f"线程 {self.thread_id} 进入专业页面失败: {e}")
                         return []
@@ -274,11 +264,10 @@ class ThreadSafeSpider:
                 logging.info(f"线程 {self.thread_id} 搜索关键词: {keyword}")
                 try:
                     keyword_data = self.search_and_parse_majors(keyword, school_name, original_url, region,
-                                                                school_features,
-                                                                search_type)
+                                                                school_features, search_type)
                     if keyword_data:
                         all_majors_data.extend(keyword_data)
-                    time.sleep(2)  # 等待时间
+                    time.sleep(2)
                 except Exception as e:
                     logging.error(f"线程 {self.thread_id} 搜索关键词 {keyword} 时出错: {e}")
                     continue
@@ -319,7 +308,7 @@ class ThreadSafeSpider:
             time.sleep(3)
 
             try:
-                dropdown = WebDriverWait(self.driver, 10).until(  # 等待时间
+                dropdown = WebDriverWait(self.driver, 10).until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, ".ivu-select-dropdown"))
                 )
 
@@ -339,7 +328,7 @@ class ThreadSafeSpider:
                         search_input.send_keys(keyword)
                         time.sleep(3)
 
-                        dropdown = WebDriverWait(self.driver, 10).until(  # 等待时间
+                        dropdown = WebDriverWait(self.driver, 10).until(
                             EC.presence_of_element_located((By.CSS_SELECTOR, ".ivu-select-dropdown"))
                         )
 
@@ -351,7 +340,7 @@ class ThreadSafeSpider:
                             logging.info(f"线程 {self.thread_id} 处理选项 {i + 1}/{len(options)}: {option_text}")
 
                             self.driver.execute_script("arguments[0].click();", current_option)
-                            time.sleep(3)  # 等待时间
+                            time.sleep(3)
 
                             page_data = self.parse_current_page_majors(school_name, keyword, option_text, region,
                                                                        school_features, search_type)
@@ -361,7 +350,7 @@ class ThreadSafeSpider:
                                     f"线程 {self.thread_id} 选项 '{option_text}' 获取到 {len(page_data)} 条数据")
 
                             self.driver.get(original_url)
-                            time.sleep(3)  # 等待时间
+                            time.sleep(3)
 
                     except StaleElementReferenceException:
                         logging.warning(f"线程 {self.thread_id} 选项 {i} 元素失效，跳过")
@@ -383,7 +372,7 @@ class ThreadSafeSpider:
                 )
                 if search_button:
                     search_button.click()
-                    time.sleep(3)  # 等待时间
+                    time.sleep(3)
 
                     page_data = self.parse_current_page_majors(school_name, keyword, keyword, region,
                                                                school_features, search_type)
@@ -392,7 +381,7 @@ class ThreadSafeSpider:
                         logging.info(f"线程 {self.thread_id} 直接搜索获取到 {len(page_data)} 条数据")
 
                     self.driver.get(original_url)
-                    time.sleep(3)  # 等待时间
+                    time.sleep(3)
 
         except Exception as e:
             logging.error(f"线程 {self.thread_id} 搜索专业 {keyword} 失败: {e}")
@@ -411,7 +400,7 @@ class ThreadSafeSpider:
 
         try:
             self.expand_all_major_details()
-            time.sleep(2)  # 等待时间
+            time.sleep(2)
 
             major_items = self.driver.find_elements(By.CSS_SELECTOR, ".zy-item")
 
@@ -470,18 +459,14 @@ class ThreadSafeSpider:
             "计算机科学与技术", "软件工程", "人工智能", "网络空间安全", "数据科学与大数据技术",
             "计算机应用技术", "信息安全", "物联网工程", "数字媒体技术", "云计算技术与应用",
             "区块链工程", "计算机系统结构", "计算机软件与理论", "智能科学与技术", "网络工程",
-
-            # 数学类
             "数学与应用数学", "信息与计算科学", "数理基础科学", "应用数学", "计算数学",
             "概率论与数理统计", "运筹学与控制论", "基础数学", "统计学", "数据计算及应用",
             "数学教育", "金融数学", "应用统计学", "计量经济学", "数学建模",
-
-            # 医药学类
             "临床医学", "基础医学", "药学", "护理学", "中医学", "中药学", "口腔医学",
             "预防医学", "公共卫生与预防医学", "医学影像学", "医学检验技术", "生物医学工程",
             "中西医临床医学", "药学（临床药学）", "麻醉学", "儿科学", "眼视光医学",
             "精神医学", "康复治疗学", "针灸推拿学", "制药工程", "药事管理"
-        ]   # 其他专业类可添加
+        ]
 
         text_lower = text.lower()
         return any(keyword in text_lower for keyword in target_keywords)
@@ -1108,7 +1093,7 @@ class ThreadSafeSpider:
                 try:
                     if button.is_displayed() and ("展开" in button.text or "详情" in button.text):
                         self.driver.execute_script("arguments[0].click();", button)
-                        time.sleep(1)  # 等待时间
+                        time.sleep(1)
                         expanded_count += 1
                 except:
                     continue
@@ -1177,14 +1162,7 @@ class ThreadSafeSpider:
 
 
 class CompleteInfoSpider:
-    def __init__(self, username=None, password=None, max_workers=2):  # 默认线程数为2
-        self.db_config = {
-            'host': 'localhost',
-            'user': 'root',
-            'password': 'Wza!64416685',
-            'database': 'kaoyan_data'
-        }
-
+    def __init__(self, username=None, password=None, max_workers=2):
         self.username = username
         self.password = password
         self.is_logged_in = False
@@ -1260,7 +1238,7 @@ class CompleteInfoSpider:
                 logging.error(f"追加数据到Excel失败: {e}")
 
     def check_and_create_tables(self):
-        """检查并创建表（不再删除现有表）"""
+        """检查并创建表"""
         connection = self.get_db_connection()
         if not connection:
             return
@@ -1315,10 +1293,9 @@ class CompleteInfoSpider:
             connection.commit()
             logging.info("数据表检查完成")
 
-        except Error as e:
+        except MySQLError as e:
             logging.error(f"检查表失败: {e}")
             try:
-                # 如果创建失败，尝试创建不带唯一索引的表
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS exam_subjects (
                         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -1344,7 +1321,7 @@ class CompleteInfoSpider:
                 """)
                 connection.commit()
                 logging.info("数据表创建成功（无唯一索引）")
-            except Error as e2:
+            except MySQLError as e2:
                 logging.error(f"创建无索引表也失败: {e2}")
         finally:
             if connection.is_connected():
@@ -1354,9 +1331,9 @@ class CompleteInfoSpider:
     def get_db_connection(self):
         """获取数据库连接"""
         try:
-            connection = mysql.connector.connect(**self.db_config)
+            connection = mysql.connector.connect(**DB_CONFIG)
             return connection
-        except Error as e:
+        except MySQLError as e:
             logging.error(f"数据库连接失败: {e}")
             return None
 
@@ -1369,13 +1346,12 @@ class CompleteInfoSpider:
         try:
             cursor = connection.cursor()
 
-            # 检查exam_subjects表中是否有该学校的数据
             query = "SELECT COUNT(*) FROM exam_subjects WHERE school_name = %s AND search_type = %s"
             cursor.execute(query, (school_name, search_type))
             count = cursor.fetchone()[0]
 
             return count > 0
-        except Error as e:
+        except MySQLError as e:
             logging.error(f"检查学校是否存在失败: {e}")
             return False
         finally:
@@ -1392,18 +1368,16 @@ class CompleteInfoSpider:
         try:
             cursor = connection.cursor()
 
-            # 删除exam_subjects表中该学校的数据
             query = "DELETE FROM exam_subjects WHERE school_name = %s AND search_type = %s"
             cursor.execute(query, (school_name, search_type))
 
-            # 删除crawl_progress表中该学校的记录
             query = "DELETE FROM crawl_progress WHERE school_name = %s AND search_type = %s"
             cursor.execute(query, (school_name, search_type))
 
             connection.commit()
             logging.info(f"已删除学校 {school_name} 的现有数据")
             return True
-        except Error as e:
+        except MySQLError as e:
             logging.error(f"删除学校数据失败: {e}")
             connection.rollback()
             return False
@@ -1428,7 +1402,6 @@ class CompleteInfoSpider:
                 while True:
                     choice = input(f"是否重新爬取学校 '{school_name}'？(y/n): ").strip().lower()
                     if choice in ['y', 'yes', '是']:
-                        # 用户选择重新爬取，删除现有数据
                         if self.delete_school_data(school_name, search_type):
                             schools_to_crawl.append(school_info)
                             print(f"学校 '{school_name}' 将重新爬取")
@@ -1441,7 +1414,6 @@ class CompleteInfoSpider:
                     else:
                         print("请输入 y/yes/是 或 n/no/否")
             else:
-                # 学校不存在，直接加入爬取列表
                 schools_to_crawl.append(school_info)
                 print(f"{i}. 学校 '{school_name}' 未在数据库中找到，将进行爬取")
 
@@ -1470,23 +1442,6 @@ class CompleteInfoSpider:
 
             for item in data:
                 try:
-                    school_name = item.get('school_name', '')
-                    major_name = item.get('major_name', '')
-                    major_code = item.get('major_code', '')
-                    department = item.get('department', '')
-                    research_direction = item.get('research_direction', '')
-                    politics_subject = item.get('politics_subject', '')
-                    foreign_language_subject = item.get('foreign_language_subject', '')
-                    business_subject1 = item.get('business_subject1', '')
-                    business_subject2 = item.get('business_subject2', '')
-                    enrollment_plan = item.get('enrollment_plan', '')
-                    exam_scope = item.get('exam_scope', '')
-                    region = item.get('region', '')
-                    data_source = item.get('data_source', '')
-                    school_features = item.get('school_features', '')
-                    degree_type = item.get('degree_type', '')
-                    search_type = item.get('search_type', 'region')
-
                     query = """
                     INSERT IGNORE INTO exam_subjects 
                     (school_name, major_name, major_code, department, research_direction,
@@ -1495,33 +1450,33 @@ class CompleteInfoSpider:
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """
                     cursor.execute(query, (
-                        school_name,
-                        major_name,
-                        major_code,
-                        department,
-                        research_direction,
-                        politics_subject,
-                        foreign_language_subject,
-                        business_subject1,
-                        business_subject2,
-                        enrollment_plan,
-                        exam_scope,
-                        region,
-                        data_source,
-                        school_features,
-                        degree_type,
-                        search_type
+                        item.get('school_name', ''),
+                        item.get('major_name', ''),
+                        item.get('major_code', ''),
+                        item.get('department', ''),
+                        item.get('research_direction', ''),
+                        item.get('politics_subject', ''),
+                        item.get('foreign_language_subject', ''),
+                        item.get('business_subject1', ''),
+                        item.get('business_subject2', ''),
+                        item.get('enrollment_plan', ''),
+                        item.get('exam_scope', ''),
+                        item.get('region', ''),
+                        item.get('data_source', ''),
+                        item.get('school_features', ''),
+                        item.get('degree_type', ''),
+                        item.get('search_type', 'region')
                     ))
                     saved_count += 1
 
-                except Error as e:
+                except MySQLError as e:
                     continue
 
             connection.commit()
             logging.info(f"成功保存 {saved_count} 条数据到数据库")
             return True
 
-        except Error as e:
+        except MySQLError as e:
             logging.error(f"保存到数据库失败: {e}")
             connection.rollback()
             return False
@@ -1532,7 +1487,7 @@ class CompleteInfoSpider:
 
     def crawl_school_task(self, school_info, region=None, search_type='region', thread_id=0):
         """单个学校的爬取任务（用于多线程）"""
-        thread_spider = ThreadSafeSpider(self.db_config, thread_id)
+        thread_spider = ThreadSafeSpider(thread_id)
         try:
             school_name = school_info['name']
             logging.info(f"线程 {thread_id} 开始处理: {school_name}")
@@ -1546,9 +1501,7 @@ class CompleteInfoSpider:
             )
 
             if school_data:
-                # 保存到数据库
                 self.save_to_database(school_data)
-                # 保存到Excel
                 self.append_to_excel(school_data)
                 logging.info(f"线程 {thread_id} 完成学校 {school_name}，获取 {len(school_data)} 条数据")
                 return school_data
@@ -1568,15 +1521,12 @@ class CompleteInfoSpider:
 
         logging.info(f"开始多线程爬取，共 {len(school_list)} 所学校，使用 {self.max_workers} 个线程")
 
-        # 使用线程池
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # 提交所有任务
             future_to_school = {
                 executor.submit(self.crawl_school_task, school, region, search_type, i): (school, i)
                 for i, school in enumerate(school_list)
             }
 
-            # 收集结果
             for future in as_completed(future_to_school):
                 school, thread_id = future_to_school[future]
                 try:
@@ -1592,7 +1542,7 @@ class CompleteInfoSpider:
 
     def get_available_regions(self):
         """获取所有可用地区"""
-        temp_spider = ThreadSafeSpider(self.db_config, 0)
+        temp_spider = ThreadSafeSpider(0)
         try:
             temp_spider.driver.get("https://yz.chsi.com.cn/zsml/dw.do")
             time.sleep(5)
@@ -1607,7 +1557,6 @@ class CompleteInfoSpider:
                     region_name = region.text.strip()
                     all_regions.append(region_name)
 
-            # 横向显示地区
             print("\n一区:", end=" ")
             for i, region in enumerate(all_regions[:21]):
                 print(f"{i + 1}.{region}", end=" ")
@@ -1667,7 +1616,6 @@ class CompleteInfoSpider:
                 print("未选择任何有效地区")
                 return [], []
 
-            # 院校特性选择
             print("\n=== 院校特性 ===")
             feature_options = [
                 ("bs", "博士点"),
@@ -1716,12 +1664,11 @@ class CompleteInfoSpider:
 
     def search_schools_by_region_and_features(self, region, features):
         """根据地区和特性搜索学校"""
-        temp_spider = ThreadSafeSpider(self.db_config, 0)
+        temp_spider = ThreadSafeSpider(0)
         try:
             temp_spider.driver.get("https://yz.chsi.com.cn/zsml/dw.do")
             time.sleep(3)
 
-            # 选择地区
             area_items = temp_spider.driver.find_elements(By.CSS_SELECTOR, ".area-item")
             region_found = False
             for area_item in area_items:
@@ -1738,7 +1685,6 @@ class CompleteInfoSpider:
                 logging.error(f"无法选择地区: {region}")
                 return []
 
-            # 选择特性
             if features:
                 for feature in features:
                     try:
@@ -1749,7 +1695,6 @@ class CompleteInfoSpider:
                     except:
                         pass
 
-            # 搜索
             search_button = temp_spider.wait_for_element_clickable(By.CSS_SELECTOR, "button.ivu-btn-primary")
             if search_button:
                 search_button.click()
@@ -1796,7 +1741,7 @@ class CompleteInfoSpider:
 
     def search_school_by_name(self, school_name):
         """根据学校名称搜索学校"""
-        temp_spider = ThreadSafeSpider(self.db_config, 0)
+        temp_spider = ThreadSafeSpider(0)
         try:
             temp_spider.driver.get("https://yz.chsi.com.cn/zsml/dw.do")
             time.sleep(3)
@@ -1817,7 +1762,7 @@ class CompleteInfoSpider:
             )
             if search_button:
                 search_button.click()
-                time.sleep(3)  # 等待时间
+                time.sleep(3)
             else:
                 logging.error("未找到查询按钮")
                 return None
@@ -1826,7 +1771,6 @@ class CompleteInfoSpider:
                 logging.warning(f"未找到学校: {school_name}")
                 return None
 
-            # 获取学校信息
             school_items = temp_spider.driver.find_elements(By.CSS_SELECTOR, ".zy-item")
             if school_items:
                 item = school_items[0]
@@ -1877,7 +1821,6 @@ class CompleteInfoSpider:
                 logging.info(f"地区 {region} 没有找到符合条件的学校")
                 continue
 
-            # 询问用户对已存在学校的处理方式
             filtered_schools = self.ask_user_for_existing_schools(schools, 'region')
 
             if not filtered_schools:
@@ -1899,7 +1842,6 @@ class CompleteInfoSpider:
         """按学校名称爬取学校专业信息（多线程版本）"""
         all_data = []
 
-        # 准备学校信息列表
         schools_to_crawl = []
         for school_name in school_names:
             logging.info(f"搜索学校: {school_name}")
@@ -1913,7 +1855,6 @@ class CompleteInfoSpider:
             logging.error("没有找到任何有效的学校")
             return all_data
 
-        # 询问用户对已存在学校的处理方式
         filtered_schools = self.ask_user_for_existing_schools(schools_to_crawl, 'school')
 
         if not filtered_schools:
@@ -1922,15 +1863,10 @@ class CompleteInfoSpider:
 
         logging.info(f"找到 {len(filtered_schools)} 所有效学校需要爬取，开始多线程爬取...")
 
-        # 使用多线程版本
         all_data = self.crawl_all_schools_multithread(filtered_schools, None, 'school')
 
         logging.info(f"所有学校爬取完成，共处理 {len(filtered_schools)} 所学校，获取 {len(all_data)} 条专业信息")
         return all_data
-
-    def close(self):
-        """清理资源"""
-        pass
 
     def delete_region_data(self, region):
         """删除指定地区的数据"""
@@ -1941,18 +1877,16 @@ class CompleteInfoSpider:
         try:
             cursor = connection.cursor()
 
-            # 删除exam_subjects表中该地区的数据
             query = "DELETE FROM exam_subjects WHERE region = %s AND search_type = 'region'"
             cursor.execute(query, (region,))
 
-            # 删除crawl_progress表中该地区的记录
             query = "DELETE FROM crawl_progress WHERE region = %s AND search_type = 'region'"
             cursor.execute(query, (region,))
 
             connection.commit()
             logging.info(f"已删除地区 {region} 的所有数据")
             return True
-        except Error as e:
+        except MySQLError as e:
             logging.error(f"删除地区数据失败: {e}")
             connection.rollback()
             return False
@@ -1963,42 +1897,28 @@ class CompleteInfoSpider:
 
 
 class ShanghaiRankingSpider:
-    """软科排名爬虫类 - 使用指定路径的Edge驱动，动态获取学科列表"""
+    """软科排名爬虫类"""
 
     def __init__(self, headless=False):
-        # 数据库配置
-        self.db_config = {
-            'host': 'localhost',
-            'user': 'root',
-            'password': 'Wza!64416685',
-            'database': 'kaoyan_data'
-        }
-
-        # 浏览器配置
         self.headless = headless
         self.driver = None
         self.wait = None
+        self.edge_driver_path = r"msedgedriver.exe"
+        self.all_subjects = {}
+        self.subjects_2025 = {}
+        self.subject_mapping = {}
 
-        # 指定Edge驱动路径
-        self.edge_driver_path = r"D:\work and study\person\数据库\爬虫+数据库\kaoyan_assistant\msedgedriver.exe"
-
-        # 学科数据（动态获取）
-        self.all_subjects = {}  # 完整的学科数据结构
-        self.subjects_2025 = {}  # 向后兼容的格式
-        self.subject_mapping = {}  # 用于交互选择的映射
-
-        # 初始化浏览器驱动
         self.setup_driver()
-
-        # 创建数据库表
         self.create_tables()
 
     def setup_driver(self):
-        """配置Edge浏览器驱动 - 使用指定路径的驱动"""
+        """配置Edge浏览器驱动"""
         try:
+            from selenium.webdriver.edge.options import Options as EdgeOptions
+            from selenium.webdriver.edge.service import Service as EdgeService
+
             edge_options = EdgeOptions()
 
-            # 如果用户指定了无头模式
             if self.headless:
                 edge_options.add_argument('--headless')
                 edge_options.add_argument('--disable-gpu')
@@ -2010,48 +1930,29 @@ class ShanghaiRankingSpider:
             edge_options.add_experimental_option('useAutomationExtension', False)
             edge_options.add_argument('--disable-blink-features=AutomationControlled')
 
-            # 模拟真实浏览器
             edge_options.add_argument(
                 'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0'
             )
 
-            # 检查驱动文件是否存在
             if not os.path.exists(self.edge_driver_path):
                 logging.error(f"Edge驱动文件不存在: {self.edge_driver_path}")
                 print(f"\n错误: Edge驱动文件不存在: {self.edge_driver_path}")
-                print("请确保驱动文件已下载并放置在正确位置")
-                print("驱动下载地址: https://developer.microsoft.com/en-us/microsoft-edge/tools/webdriver/")
                 raise FileNotFoundError(f"Edge驱动文件不存在: {self.edge_driver_path}")
 
             logging.info(f"使用Edge驱动路径: {self.edge_driver_path}")
 
-            # 创建Edge服务并指定驱动路径
             service = EdgeService(executable_path=self.edge_driver_path)
-
-            # 创建driver
             self.driver = webdriver.Edge(service=service, options=edge_options)
 
-            # 防止被检测为自动化工具
             self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
-            # 设置WebDriverWait
             self.wait = WebDriverWait(self.driver, 10)
-
-            # 设置隐式等待
             self.driver.implicitly_wait(5)
 
             logging.info("浏览器驱动初始化成功")
 
         except Exception as e:
             logging.error(f"浏览器驱动初始化失败: {e}")
-            print(f"\n浏览器驱动初始化失败: {e}")
-            print("\n可能的解决方案:")
-            print(f"1. 检查驱动文件是否存在: {self.edge_driver_path}")
-            print("2. 确保Edge浏览器已安装并更新到最新版本")
-            print("3. 尝试重新下载Edge驱动:")
-            print("   - 下载地址: https://developer.microsoft.com/en-us/microsoft-edge/tools/webdriver/")
-            print("   - 选择与你的Edge浏览器版本匹配的驱动")
-            print("   - 下载后解压，将msedgedriver.exe放到上述路径")
             raise
 
     def wait_for_element(self, by, value, timeout=10):
@@ -2090,9 +1991,9 @@ class ShanghaiRankingSpider:
     def get_db_connection(self):
         """获取数据库连接"""
         try:
-            connection = mysql.connector.connect(**self.db_config)
+            connection = mysql.connector.connect(**DB_CONFIG)
             return connection
-        except Error as e:
+        except MySQLError as e:
             logging.error(f"数据库连接失败: {e}")
             return None
 
@@ -2105,29 +2006,21 @@ class ShanghaiRankingSpider:
         try:
             cursor = connection.cursor()
 
-            # 先检查表是否存在，如果存在且结构不对则删除重建
             cursor.execute("SHOW TABLES LIKE 'shanghai_subject_rankings'")
             table_exists = cursor.fetchone()
 
             if table_exists:
-                # 检查表结构是否包含ranking_position_2025列
                 try:
-                    # 先关闭当前结果集
-                    cursor.fetchall()  # 确保之前的结果被完全读取
-
                     cursor.execute("SELECT ranking_position_2025 FROM shanghai_subject_rankings LIMIT 1")
-                    cursor.fetchall()  # 读取结果
+                    cursor.fetchall()
                     logging.info("表结构正确，无需重建")
-                except mysql.connector.Error:
-                    # 表存在但结构不对，删除重建
+                except MySQLError:
                     logging.info("表结构不正确，删除重建...")
                     cursor.execute("DROP TABLE IF EXISTS shanghai_subject_rankings")
                     connection.commit()
             else:
-                # 确保结果被读取
                 cursor.fetchall()
 
-            # 创建学科排名表（如果不存在）
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS shanghai_subject_rankings (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -2156,7 +2049,7 @@ class ShanghaiRankingSpider:
             logging.info("软科排名数据表创建/更新成功")
             return True
 
-        except Error as e:
+        except MySQLError as e:
             logging.error(f"创建/更新软科排名表失败: {e}")
             return False
         finally:
@@ -2165,44 +2058,34 @@ class ShanghaiRankingSpider:
                 connection.close()
 
     def fetch_all_subjects_from_web(self, url="https://www.shanghairanking.cn/rankings/bcsr/2025"):
-        """
-        从软科排名页面动态爬取所有学科信息
-        返回格式: {'学科大类代码': {'category_name': '大类名称', 'subjects': [('学科代码', '学科名称'), ...]}, ...}
-        """
+        """从软科排名页面动态爬取所有学科信息"""
         logging.info(f"开始从网页爬取所有学科信息: {url}")
 
         try:
-            # 导航到学科列表页面
             self.driver.get(url)
-            time.sleep(5)  # 等待页面加载
+            time.sleep(5)
 
-            # 等待学科容器加载
             subject_container = self.wait_for_element(By.CSS_SELECTOR, ".subject-container", timeout=15)
             if not subject_container:
                 logging.error("未找到学科容器")
                 return {}
 
-            # 解析所有学科大类
             subject_items = subject_container.find_elements(By.CSS_SELECTOR, ".subject-item")
             all_subjects = {}
 
             for item in subject_items:
                 try:
-                    # 获取学科大类信息
-                    category_code = item.get_attribute("id")  # 例如 "01", "02", ...
+                    category_code = item.get_attribute("id")
 
-                    # 获取学科大类名称
                     category_title_elem = item.find_element(By.CSS_SELECTOR, ".subject-title")
                     category_name = category_title_elem.text.strip() if category_title_elem else f"类别{category_code}"
 
-                    # 获取该大类下的所有具体学科
                     subject_list = item.find_element(By.CSS_SELECTOR, ".subject-list")
                     subject_links = subject_list.find_elements(By.CSS_SELECTOR, ".subj-link")
 
                     subjects_in_category = []
                     for link in subject_links:
                         try:
-                            # 学科代码和名称在span标签内
                             spans = link.find_elements(By.TAG_NAME, "span")
                             if len(spans) >= 2:
                                 subject_code = spans[0].text.strip()
@@ -2225,11 +2108,9 @@ class ShanghaiRankingSpider:
                     logging.debug(f"解析学科大类失败: {e}")
                     continue
 
-            # 更新实例变量
             self.all_subjects = all_subjects
             self.subjects_2025 = {cat_code: cat_info['subjects'] for cat_code, cat_info in all_subjects.items()}
 
-            # 生成学科映射（用于交互选择）
             self.generate_subject_mapping()
 
             total_subjects = sum(len(cat_info['subjects']) for cat_info in all_subjects.values())
@@ -2249,7 +2130,6 @@ class ShanghaiRankingSpider:
         self.subject_mapping = {}
         subject_index = 1
 
-        # 按类别代码排序
         sorted_categories = sorted(self.all_subjects.items(), key=lambda x: x[0])
 
         for category_code, category_info in sorted_categories:
@@ -2262,12 +2142,9 @@ class ShanghaiRankingSpider:
 
         return self.subject_mapping
 
-    def display_all_subjects(self, refresh=False):
-        """
-        显示所有爬取到的学科信息，供用户选择
-        refresh: 是否重新从网页获取学科列表
-        """
-        if refresh or not self.all_subjects:
+    def display_all_subjects(self):
+        """显示所有爬取到的学科信息，供用户选择"""
+        if not self.all_subjects:
             print("正在从软科官网获取最新学科列表...")
             self.fetch_all_subjects_from_web()
 
@@ -2279,11 +2156,9 @@ class ShanghaiRankingSpider:
         print("软科2025学科排名 - 所有可用学科")
         print("=" * 60)
 
-        # 确保有学科映射
         if not self.subject_mapping:
             self.generate_subject_mapping()
 
-        # 按类别代码排序
         sorted_categories = sorted(self.all_subjects.items(), key=lambda x: x[0])
 
         for category_code, category_info in sorted_categories:
@@ -2293,7 +2168,6 @@ class ShanghaiRankingSpider:
             print(f"\n【{category_code}】{category_name}")
 
             for subject_code, subject_name in subjects:
-                # 找到对应的编号
                 for idx, mapping in self.subject_mapping.items():
                     if mapping[0] == subject_code and mapping[1] == subject_name:
                         print(f"  {idx:3d}. [{subject_code}] {subject_name}")
@@ -2310,17 +2184,11 @@ class ShanghaiRankingSpider:
         if not school_name:
             return ""
 
-        # 移除空格和特殊字符
         school_name = school_name.strip()
-
-        # 移除括号内的内容（如校区信息）
         school_name = re.sub(r'\([^)]*\)', '', school_name)
         school_name = re.sub(r'（[^）]*）', '', school_name)
-
-        # 移除多余空格
         school_name = re.sub(r'\s+', ' ', school_name).strip()
 
-        # 处理特殊情况
         replacements = {
             '北京协和医学院(清华大学医学部)': '北京协和医学院',
             '国防科技大学（原国防科学技术大学）': '国防科技大学',
@@ -2346,21 +2214,17 @@ class ShanghaiRankingSpider:
 
         rank_text = str(rank_text).strip()
 
-        # 如果是数字直接返回
         if rank_text.isdigit():
             return int(rank_text)
         elif '-' in rank_text:
-            # 处理 "1-2" 这样的排名范围，取第一个数字
             parts = rank_text.split('-')
             if parts[0].strip().isdigit():
                 return int(parts[0].strip())
             else:
-                # 尝试提取数字
                 match = re.search(r'(\d+)', parts[0].strip())
                 if match:
                     return int(match.group(1))
         else:
-            # 尝试提取数字
             match = re.search(r'(\d+)', rank_text)
             if match:
                 return int(match.group(1))
@@ -2373,7 +2237,6 @@ class ShanghaiRankingSpider:
             return 0.0
 
         try:
-            # 移除非数字字符（除了小数点）
             cleaned_text = re.sub(r'[^\d.]', '', str(score_text))
             if cleaned_text:
                 return float(cleaned_text)
@@ -2389,17 +2252,14 @@ class ShanghaiRankingSpider:
         try:
             self.driver.get(url)
 
-            # 等待页面加载完成
             if not self.wait_for_page_load():
                 logging.warning("页面加载可能未完成，继续尝试...")
 
-            # 等待表格出现
             table = self.wait_for_element(By.CLASS_NAME, "rk-table", timeout=20)
             if not table:
                 logging.error("未找到排名表格")
                 return False
 
-            # 等待表格数据加载
             time.sleep(3)
             logging.info("页面加载完成")
             return True
@@ -2419,29 +2279,25 @@ class ShanghaiRankingSpider:
     def get_total_pages(self):
         """获取总页数"""
         try:
-            # 等待分页器加载
             pagination = self.wait_for_element(By.CLASS_NAME, "ant-pagination", timeout=15)
             if not pagination:
                 logging.warning("未找到分页器")
                 return 1
 
-            # 等待分页器完全渲染
             time.sleep(2)
 
-            # 方法1: 查找总页数文本
             try:
                 total_text_element = pagination.find_element(By.CLASS_NAME, "ant-pagination-total-text")
                 text = total_text_element.text
                 match = re.search(r'共\s*(\d+)\s*条', text)
                 if match:
                     total_items = int(match.group(1))
-                    total_pages = (total_items + 29) // 30  # 每页30条
+                    total_pages = (total_items + 29) // 30
                     logging.info(f"总条目: {total_items}, 总页数: {total_pages}")
                     return total_pages
             except NoSuchElementException:
                 pass
 
-            # 方法2: 查找所有页码按钮，取最大值
             try:
                 page_buttons = pagination.find_elements(By.CLASS_NAME, "ant-pagination-item")
                 if page_buttons:
@@ -2462,7 +2318,6 @@ class ShanghaiRankingSpider:
             except Exception as e:
                 logging.debug(f"方法2失败: {e}")
 
-            # 默认返回1页
             logging.info("无法获取总页数，默认返回1页")
             return 1
 
@@ -2471,19 +2326,16 @@ class ShanghaiRankingSpider:
             return 1
 
     def go_to_page(self, page_num):
-        """跳转到指定页码 - 改进版"""
+        """跳转到指定页码"""
         try:
             logging.info(f"尝试跳转到第 {page_num} 页")
 
-            # 等待分页器加载
             pagination = self.wait_for_element(By.CLASS_NAME, "ant-pagination", timeout=15)
             if not pagination:
                 logging.error("未找到分页器")
                 return False
 
-            # 方法1: 直接点击页码按钮（最可靠）
             try:
-                # 查找所有页码按钮
                 page_buttons = pagination.find_elements(By.CLASS_NAME, "ant-pagination-item")
                 logging.info(f"找到 {len(page_buttons)} 个页码按钮")
 
@@ -2498,69 +2350,47 @@ class ShanghaiRankingSpider:
                         continue
 
                 if target_button:
-                    # 检查是否已经是当前页
                     class_attr = target_button.get_attribute("class")
                     if "ant-pagination-item-active" in class_attr:
                         logging.info(f"已经是第 {page_num} 页")
                         return True
 
-                    # 滚动到元素位置
                     self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
                                                target_button)
                     time.sleep(1)
 
-                    # 使用JavaScript点击，避免元素不可点击的问题
                     self.driver.execute_script("arguments[0].click();", target_button)
                     logging.info(f"通过JavaScript点击跳转到第 {page_num} 页")
 
-                    # 等待页面加载
                     self.wait_for_page_load()
                     time.sleep(3)
 
-                    # 验证是否跳转成功
                     active_page = self.wait_for_element(By.CSS_SELECTOR, ".ant-pagination-item-active", timeout=10)
                     if active_page:
                         active_page_num = active_page.text.strip()
                         if active_page_num.isdigit() and int(active_page_num) == page_num:
                             logging.info(f"成功跳转到第 {page_num} 页")
                             return True
-                    else:
-                        # 重新检查当前页码
-                        time.sleep(2)
-                        # 再次查找当前激活的页码
-                        try:
-                            active_page = self.driver.find_element(By.CSS_SELECTOR, ".ant-pagination-item-active")
-                            active_page_num = active_page.text.strip()
-                            if active_page_num.isdigit() and int(active_page_num) == page_num:
-                                logging.info(f"成功跳转到第 {page_num} 页（二次验证）")
-                                return True
-                        except:
-                            pass
             except Exception as e:
                 logging.debug(f"方法1失败: {e}")
 
-            # 方法2: 使用页码输入框（快速跳转）
             try:
                 quick_jumper = pagination.find_element(By.CLASS_NAME, "ant-pagination-options-quick-jumper")
                 page_input = quick_jumper.find_element(By.TAG_NAME, "input")
 
-                # 滚动到输入框
                 self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
                                            page_input)
                 time.sleep(1)
 
-                # 清空并输入页码
                 page_input.clear()
                 page_input.send_keys(str(page_num))
                 page_input.send_keys(Keys.RETURN)
 
                 logging.info(f"使用输入框跳转到第 {page_num} 页")
 
-                # 等页面加载
                 self.wait_for_page_load()
                 time.sleep(4)
 
-                # 验证跳转
                 active_page = self.wait_for_element(By.CSS_SELECTOR, ".ant-pagination-item-active", timeout=10)
                 if active_page:
                     active_page_num = active_page.text.strip()
@@ -2570,11 +2400,9 @@ class ShanghaiRankingSpider:
             except Exception as e:
                 logging.debug(f"方法2失败: {e}")
 
-            # 方法3: 模拟点击下一页按钮多次
             try:
                 current_page = 1
 
-                # 获取当前页码
                 try:
                     active_page = pagination.find_element(By.CLASS_NAME, "ant-pagination-item-active")
                     current_page_text = active_page.text.strip()
@@ -2583,38 +2411,31 @@ class ShanghaiRankingSpider:
                 except:
                     pass
 
-                # 如果目标页大于当前页，点击"下一页"
                 if page_num > current_page:
                     clicks_needed = page_num - current_page
                     for click_count in range(clicks_needed):
                         next_button = pagination.find_element(By.CLASS_NAME, "ant-pagination-next")
 
-                        # 检查是否已禁用
                         if "ant-pagination-disabled" in next_button.get_attribute("class"):
                             logging.warning(f"下一页按钮已禁用，可能已到最后一页")
                             break
 
-                        # 滚动并点击
                         self.driver.execute_script(
                             "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", next_button)
                         time.sleep(1)
 
-                        # 使用JavaScript点击
                         self.driver.execute_script("arguments[0].click();", next_button)
 
                         logging.info(f"点击下一页 ({current_page + click_count} -> {current_page + click_count + 1})")
 
-                        # 等待页面加载
                         self.wait_for_page_load()
                         time.sleep(3)
 
-                        # 重新获取分页器
                         pagination = self.wait_for_element(By.CLASS_NAME, "ant-pagination", timeout=10)
                         if not pagination:
                             logging.warning("分页器丢失")
                             break
 
-                    # 验证最终页码
                     time.sleep(2)
                     final_active_page = self.wait_for_element(By.CSS_SELECTOR, ".ant-pagination-item-active",
                                                               timeout=10)
@@ -2636,44 +2457,21 @@ class ShanghaiRankingSpider:
             return False
 
     def parse_current_page(self, subject_code, subject_name, page_num=1):
-        """解析当前页面的数据 - 同时获取2025和2024排名"""
+        """解析当前页面的数据"""
         try:
-            # 等待表格加载
             table = self.wait_for_element(By.CLASS_NAME, "rk-table", timeout=15)
             if not table:
                 logging.warning("未找到排名表格")
                 return []
 
-            # 获取页面HTML
             page_source = self.driver.page_source
             soup = BeautifulSoup(page_source, 'html.parser')
 
-            # 查找排名表格
             table = soup.find('table', class_='rk-table')
             if not table:
                 logging.warning("未找到排名表格")
                 return []
 
-            # 解析表头
-            headers = []
-            thead = table.find('thead')
-            if thead:
-                header_cells = thead.find_all('th')
-                headers = [cell.get_text(strip=True) for cell in header_cells]
-
-            logging.info(f"表头信息: {headers}")
-
-            # 根据表头确定列索引 - 简化逻辑
-            col_indices = {
-                'rank_2025': 0,  # 固定第0列是2025排名
-                'rank_2024': 1,  # 固定第1列是2024排名
-                'school': 3,  # 固定第3列是学校名称
-                'score_2025': 4  # 固定第4列是总分
-            }
-
-            logging.info(f"使用固定列索引: {col_indices}")
-
-            # 提取数据行
             tbody = table.find('tbody')
             if not tbody:
                 return []
@@ -2683,17 +2481,13 @@ class ShanghaiRankingSpider:
 
             for row in rows:
                 cells = row.find_all('td')
-                # 检查是否有足够的列
-                if len(cells) < 5:  # 至少需要5列
+                if len(cells) < 5:
                     continue
 
                 try:
-                    # 解析2025排名 - 第0列
                     rank_2025 = 0
-                    if len(cells) > col_indices['rank_2025']:
-                        # 直接获取排名数字，可能包含在div中
-                        rank_cell = cells[col_indices['rank_2025']]
-                        # 查找div.ranking或者直接获取文本
+                    if len(cells) > 0:
+                        rank_cell = cells[0]
                         rank_div = rank_cell.find('div', class_='ranking')
                         if rank_div:
                             rank_text = rank_div.get_text(strip=True)
@@ -2701,11 +2495,9 @@ class ShanghaiRankingSpider:
                             rank_text = rank_cell.get_text(strip=True)
                         rank_2025 = self.extract_rank_number(rank_text)
 
-                    # 解析2024排名 - 第1列
                     rank_2024 = 0
-                    if len(cells) > col_indices['rank_2024']:
-                        rank_cell = cells[col_indices['rank_2024']]
-                        # 2024排名可能包含在span中或有特殊样式
+                    if len(cells) > 1:
+                        rank_cell = cells[1]
                         rank_span = rank_cell.find('span')
                         if rank_span:
                             rank_text = rank_span.get_text(strip=True)
@@ -2713,11 +2505,9 @@ class ShanghaiRankingSpider:
                             rank_text = rank_cell.get_text(strip=True)
                         rank_2024 = self.extract_rank_number(rank_text)
 
-                    # 解析学校名称 - 第3列
                     school_name = ""
-                    if len(cells) > col_indices['school']:
-                        school_cell = cells[col_indices['school']]
-                        # 学校名称可能在span.name-cn中
+                    if len(cells) > 3:
+                        school_cell = cells[3]
                         name_span = school_cell.find('span', class_='name-cn')
                         if name_span:
                             school_name = self.clean_school_name(name_span.get_text(strip=True))
@@ -2727,16 +2517,13 @@ class ShanghaiRankingSpider:
                     if not school_name or len(school_name) < 2:
                         continue
 
-                    # 解析2025分数 - 第4列
                     score_2025 = 0.0
-                    if len(cells) > col_indices['score_2025']:
-                        score_text = cells[col_indices['score_2025']].get_text(strip=True)
+                    if len(cells) > 4:
+                        score_text = cells[4].get_text(strip=True)
                         score_2025 = self.extract_score(score_text)
 
-                    # 2024分数通常不单独显示，设为0.0
                     score_2024 = 0.0
 
-                    # 确定学科类别
                     subject_category = ""
                     if subject_code.startswith('01'):
                         subject_category = "哲学"
@@ -2768,7 +2555,7 @@ class ShanghaiRankingSpider:
                         subject_category = "其他"
 
                     data_rows.append({
-                        'year': 2025,  # 主年份为2025
+                        'year': 2025,
                         'subject_code': subject_code,
                         'subject_name': subject_name,
                         'ranking_position_2025': rank_2025,
@@ -2788,7 +2575,6 @@ class ShanghaiRankingSpider:
 
             logging.info(f"成功解析 {len(data_rows)} 条数据")
 
-            # 显示样本数据
             if data_rows and page_num <= 2:
                 logging.info(f"第{page_num}页样本数据:")
                 for i, data in enumerate(data_rows[:3]):
@@ -2810,47 +2596,38 @@ class ShanghaiRankingSpider:
         all_data = []
 
         try:
-            # 1. 导航到学科页面
             if not self.navigate_to_subject_page(subject_code):
                 logging.error(f"无法访问学科页面: {subject_name}")
                 return []
 
-            # 2. 获取总页数
             total_pages = self.get_total_pages()
             logging.info(f"总页数: {total_pages}")
 
-            # 3. 限制爬取的页数
             if max_pages and max_pages < total_pages:
                 total_pages = max_pages
 
-            # 4. 爬取每一页数据
             for page_num in range(1, total_pages + 1):
                 try:
                     logging.info(f"爬取第 {page_num}/{total_pages} 页...")
 
-                    # 如果是第一页，已经加载过了
                     if page_num > 1:
                         if not self.go_to_page(page_num):
                             logging.warning(f"无法跳转到第 {page_num} 页，跳过")
                             continue
 
-                    # 等待表格数据加载
                     table = self.wait_for_element(By.CLASS_NAME, "rk-table", timeout=10)
                     if not table:
                         logging.warning(f"第 {page_num} 页未找到表格")
                         continue
 
-                    # 等待表格有数据
                     time.sleep(2)
 
-                    # 解析当前页面数据
                     page_data = self.parse_current_page(subject_code, subject_name, page_num)
 
                     if page_data:
                         all_data.extend(page_data)
                         logging.info(f"第 {page_num} 页解析到 {len(page_data)} 条数据")
 
-                        # 显示样本数据
                         if page_num <= 2:
                             logging.info(f"  样本数据:")
                             for i, data in enumerate(page_data[:2]):
@@ -2861,12 +2638,10 @@ class ShanghaiRankingSpider:
                                     f"分数: {data['score_2025']:.1f}")
                     else:
                         logging.warning(f"第 {page_num} 页未获取到数据")
-                        # 尝试重新加载页面
                         if page_num == 1:
                             self.driver.refresh()
                             time.sleep(3)
 
-                    # 避免操作过于频繁
                     if page_num < total_pages:
                         delay = random.uniform(3, 6)
                         logging.info(f"  等待 {delay:.1f} 秒后继续...")
@@ -2874,7 +2649,6 @@ class ShanghaiRankingSpider:
 
                 except Exception as e:
                     logging.error(f"爬取第 {page_num} 页失败: {e}")
-                    # 尝试重新导航
                     if not self.navigate_to_subject_page(subject_code):
                         break
                     continue
@@ -2883,7 +2657,6 @@ class ShanghaiRankingSpider:
                 logging.warning(f"学科 {subject_name} 未获取到任何数据")
                 return []
 
-            # 5. 数据去重
             unique_data = {}
             for data in all_data:
                 key = f"{data['ranking_position_2025']}_{data['school_name']}"
@@ -2891,13 +2664,10 @@ class ShanghaiRankingSpider:
                     unique_data[key] = data
 
             all_data = list(unique_data.values())
-
-            # 6. 按排名排序
             all_data.sort(key=lambda x: x['ranking_position_2025'])
 
             logging.info(f"学科 {subject_name} 爬取完成，共获取 {len(all_data)} 条唯一数据")
 
-            # 7. 显示前10条数据
             if all_data:
                 logging.info(f"前10条数据:")
                 for i, data in enumerate(all_data[:10]):
@@ -2966,7 +2736,7 @@ class ShanghaiRankingSpider:
                     ))
                     saved_count += 1
 
-                except Error as e:
+                except MySQLError as e:
                     error_count += 1
                     logging.warning(
                         f"保存数据失败 {ranking.get('subject_name', '')}-{ranking.get('school_name', '')}: {e}")
@@ -2976,7 +2746,7 @@ class ShanghaiRankingSpider:
             logging.info(f"成功保存 {saved_count} 条数据到数据库，失败 {error_count} 条")
             return True
 
-        except Error as e:
+        except MySQLError as e:
             logging.error(f"保存数据到数据库失败: {e}")
             connection.rollback()
             return False
@@ -3016,7 +2786,6 @@ class ShanghaiRankingSpider:
             return False
 
         try:
-            # 读取学科排名数据
             query = "SELECT * FROM shanghai_subject_rankings ORDER BY subject_code, ranking_position_2025"
             df = pd.read_sql(query, connection)
 
@@ -3024,28 +2793,23 @@ class ShanghaiRankingSpider:
                 print("数据库中没有数据可导出")
                 return False
 
-            # 创建导出目录
             export_dir = 'exports'
             if not os.path.exists(export_dir):
                 os.makedirs(export_dir)
 
-            # 生成文件名
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             filename = f"shanghai_subject_rankings_{timestamp}.xlsx"
             filepath = os.path.join(export_dir, filename)
 
-            # 导出到Excel
             df.to_excel(filepath, index=False, engine='openpyxl')
             print(f"数据已导出到: {filepath}")
             print(f"共导出 {len(df)} 条记录")
             print(f"学科数量: {df['subject_code'].nunique()}")
             print(f"学校数量: {df['school_name'].nunique()}")
 
-            # 显示数据结构
             print("\n数据结构:")
             print(f"列名: {', '.join(df.columns.tolist())}")
 
-            # 显示前5条数据样本
             print("\n前5条数据样本:")
             for i, row in df.head().iterrows():
                 print(f"  {row['subject_name']} - {row['school_name']}: "
@@ -3079,20 +2843,18 @@ class ShanghaiRankingSpider:
         try:
             cursor = connection.cursor()
 
-            # 获取当前数据统计
             cursor.execute("SELECT COUNT(*) as count FROM shanghai_subject_rankings")
             subject_count = cursor.fetchone()[0]
 
             print(f"当前学科排名表有 {subject_count} 条记录")
 
-            # 执行删除
             cursor.execute("DELETE FROM shanghai_subject_rankings")
             connection.commit()
 
             print("数据清除成功")
             return True
 
-        except Error as e:
+        except MySQLError as e:
             print(f"清除数据失败: {e}")
             connection.rollback()
             return False
@@ -3110,7 +2872,6 @@ class ShanghaiRankingSpider:
         try:
             cursor = connection.cursor()
 
-            # 获取当前数据统计
             cursor.execute("SELECT COUNT(*) as count FROM shanghai_subject_rankings WHERE subject_name = %s",
                            (subject_name,))
             subject_count = cursor.fetchone()[0]
@@ -3124,14 +2885,13 @@ class ShanghaiRankingSpider:
                 print("已取消删除操作")
                 return False
 
-            # 执行删除
             cursor.execute("DELETE FROM shanghai_subject_rankings WHERE subject_name = %s", (subject_name,))
             connection.commit()
 
             print(f"成功删除学科 '{subject_name}' 的 {subject_count} 条数据")
             return True
 
-        except Error as e:
+        except MySQLError as e:
             print(f"删除学科数据失败: {e}")
             connection.rollback()
             return False
@@ -3149,20 +2909,6 @@ class ShanghaiRankingSpider:
             except:
                 pass
 
-    def get_subject_by_index(self, index):
-        """根据索引获取学科信息"""
-        if index in self.subject_mapping:
-            return self.subject_mapping[index]
-        return None
-
-    def get_subject_count(self):
-        """获取学科总数"""
-        return len(self.subject_mapping)
-
-    def get_category_count(self):
-        """获取学科大类总数"""
-        return len(self.all_subjects)
-
 
 def get_db_connection():
     """获取数据库连接"""
@@ -3176,7 +2922,7 @@ def get_db_connection():
             cursorclass=DictCursor
         )
         return connection
-    except Error as e:
+    except pymysql.Error as e:
         st.error(f"数据库连接失败: {e}")
         return None
 
@@ -3189,7 +2935,6 @@ def init_database():
 
     try:
         with connection.cursor() as cursor:
-            # 创建用户表
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -3202,7 +2947,6 @@ def init_database():
                 )
             """)
 
-            # 创建聊天记录表
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS chat_history (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -3216,7 +2960,7 @@ def init_database():
 
         connection.commit()
         return True
-    except Error as e:
+    except pymysql.Error as e:
         st.error(f"数据库初始化失败: {e}")
         return False
     finally:
@@ -3247,17 +2991,14 @@ def register_user(username, email, password):
 
     try:
         with connection.cursor() as cursor:
-            # 检查用户名是否已存在
             cursor.execute("SELECT id FROM users WHERE username = %s", (username,))
             if cursor.fetchone():
                 return False, "用户名已存在"
 
-            # 检查邮箱是否已存在
             cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
             if cursor.fetchone():
                 return False, "邮箱已被注册"
 
-            # 插入新用户
             password_hash = hash_password(password)
             cursor.execute(
                 "INSERT INTO users (username, email, password_hash) VALUES (%s, %s, %s)",
@@ -3267,7 +3008,7 @@ def register_user(username, email, password):
         connection.commit()
         return True, "注册成功"
 
-    except Error as e:
+    except pymysql.Error as e:
         return False, f"注册失败: {str(e)}"
     finally:
         connection.close()
@@ -3290,7 +3031,6 @@ def verify_user(username, password):
 
             user = cursor.fetchone()
             if user:
-                # 更新最后登录时间
                 cursor.execute(
                     "UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = %s",
                     (user['id'],)
@@ -3300,7 +3040,7 @@ def verify_user(username, password):
             else:
                 return False, None
 
-    except Error as e:
+    except pymysql.Error as e:
         return False, None
     finally:
         connection.close()
@@ -3320,7 +3060,7 @@ def save_chat_history(user_id, question, answer):
             )
         connection.commit()
         return True
-    except Error:
+    except pymysql.Error:
         return False
     finally:
         connection.close()
@@ -3339,7 +3079,7 @@ def get_chat_history(user_id, limit=10):
                 (user_id, limit)
             )
             return cursor.fetchall()
-    except Error:
+    except pymysql.Error:
         return []
     finally:
         connection.close()
@@ -3353,15 +3093,11 @@ def query_database(question):
 
     try:
         with connection.cursor() as cursor:
-            # 1. 提取关键词进行精确查询
             question_lower = question.lower()
 
-            # 动态构建查询条件
             conditions = []
             params = []
 
-            # 提取学校名：尝试匹配"XX大学"格式
-            import re
             school_pattern = r'([\u4e00-\u9fa5]+大学)'
             school_matches = re.findall(school_pattern, question)
 
@@ -3370,7 +3106,6 @@ def query_database(question):
                     conditions.append("school_name LIKE %s")
                     params.append(f"%{school}%")
 
-            # 提取专业名：常见专业关键词
             major_patterns = [
                 '信息安全', '计算机', '软件', '人工智能', '电子信息',
                 '电子科学', '网络空间安全', '电子信息技术', '新一代电子信息技术',
@@ -3382,11 +3117,9 @@ def query_database(question):
                     conditions.append("major_name LIKE %s")
                     params.append(f"%{pattern}%")
 
-            # 提取研究方向关键词
             direction_keywords = ['方向', '研究方向', '有哪些方向', '什么方向']
             has_direction_query = any(keyword in question for keyword in direction_keywords)
 
-            # 构建查询SQL
             if conditions:
                 query = """
                 SELECT DISTINCT 
@@ -3396,14 +3129,12 @@ def query_database(question):
                 FROM exam_subjects 
                 WHERE """ + " OR ".join(conditions)
 
-                # 如果是询问方向，优先返回有明确研究方向的数据
                 if has_direction_query:
                     query += " AND research_direction IS NOT NULL AND research_direction != ''"
 
                 query += " ORDER BY school_name, major_name, research_direction"
                 cursor.execute(query, params)
             else:
-                # 如果没有匹配条件，使用智能匹配
                 words = question.replace('?', '').replace('？', '').split()
                 if len(words) > 0:
                     query = """
@@ -3419,7 +3150,6 @@ def query_database(question):
 
             results = cursor.fetchall()
 
-            # 2. 对结果进行智能分组（同一学校+专业的方向合并）
             grouped_results = []
             seen = {}
 
@@ -3442,24 +3172,21 @@ def query_database(question):
                         'data_source': result.get('data_source', '')
                     }
 
-                # 添加研究方向（去重）
                 if result.get('research_direction'):
                     direction = result['research_direction'].strip()
                     if direction and direction not in seen[key]['research_directions']:
                         seen[key]['research_directions'].append(direction)
 
-                # 添加院系信息（去重）
                 if result.get('department'):
                     seen[key]['departments'].add(result['department'])
 
-            # 转换为列表格式
             for key, value in seen.items():
                 value['departments'] = list(value['departments'])
                 grouped_results.append(value)
 
             return grouped_results
 
-    except Error as e:
+    except pymysql.Error as e:
         print(f"数据库查询错误: {e}")
         return []
     finally:
@@ -3480,7 +3207,6 @@ def format_database_results(results):
             formatted += f"（{result['major_code']}）"
         formatted += "\n"
 
-        # 显示研究方向（重点）
         if result.get('research_directions'):
             formatted += "   **研究方向**：\n"
             for direction in result['research_directions']:
@@ -3488,15 +3214,12 @@ def format_database_results(results):
         else:
             formatted += "   **研究方向**：数据库中未记录具体方向，或该专业在招生时不区分方向。\n"
 
-        # 显示院系信息
         if result.get('departments'):
             formatted += f"   **开设院系**：{', '.join(result['departments'])}\n"
 
-        # 显示招生信息（如有）
         if result.get('enrollment_plan'):
             formatted += f"   **拟招生人数**：{result['enrollment_plan']}\n"
 
-        # 显示考试科目（如有）
         has_exam_subjects = (
                 result.get('politics_subject') or
                 result.get('foreign_language_subject') or
@@ -3518,7 +3241,6 @@ def format_database_results(results):
         formatted += f"   **地区**：{result.get('region', '未记录')}\n"
         formatted += "\n"
 
-    # 添加重要的说明信息
     formatted += """
 ---
 **重要说明**：
@@ -3541,7 +3263,6 @@ def call_deepseek_api(question, context):
             "Authorization": f"Bearer {api_key}"
         }
 
-        # 优化系统提示词，强调基于数据库回答
         system_prompt = """你是一个专业的考研咨询助手，请严格按照提供的数据库信息回答问题。
 
 **回答准则**：
@@ -3557,7 +3278,6 @@ def call_deepseek_api(question, context):
 - 如果数据库没有相关信息，明确说明。
 """
 
-        # 优化用户消息格式
         user_message = f"""用户问题：{question}
 
 数据库查询结果：
@@ -3576,7 +3296,7 @@ def call_deepseek_api(question, context):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
             ],
-            "temperature": 0.3,  # 降低随机性，提高确定性
+            "temperature": 0.3,
             "max_tokens": 2500
         }
 
@@ -3586,7 +3306,6 @@ def call_deepseek_api(question, context):
             result = response.json()
             answer = result['choices'][0]['message']['content']
 
-            # 后处理：确保回答基于数据库
             if "未在数据库中" in context and "未找到" not in answer.lower():
                 answer += "\n\n注：以上信息基于数据库查询结果，如与官方信息有出入，请以学校官方发布为准。"
 
@@ -3609,13 +3328,11 @@ def get_school_list():
             cursor.execute("SELECT DISTINCT school_name FROM exam_subjects ORDER BY school_name")
             schools = [row['school_name'] for row in cursor.fetchall()]
             return schools
-    except Error:
+    except pymysql.Error:
         return []
     finally:
         connection.close()
 
-
-# ==================== 新增函数：软科排名查询和格式化 ====================
 
 def query_shanghai_ranking(question):
     """查询软科排名数据"""
@@ -3625,15 +3342,12 @@ def query_shanghai_ranking(question):
 
     try:
         with connection.cursor() as cursor:
-            # 提取关键词
             question_lower = question.lower()
 
-            # 检查是否包含排名关键词
             ranking_keywords = ['排名', '软科', 'shanghai', '学科评估', '学科排名']
             if not any(keyword in question_lower for keyword in ranking_keywords):
                 return []
 
-            # 提取学科关键词
             subject_keywords = {
                 '数学': ['数学', 'math', 'mathematics'],
                 '计算机': ['计算机', '软件', '人工智能', 'ai', 'computer', 'software'],
@@ -3650,7 +3364,6 @@ def query_shanghai_ranking(question):
             conditions = []
             params = []
 
-            # 检查学科关键词
             for subject_name, keywords in subject_keywords.items():
                 for keyword in keywords:
                     if keyword in question_lower:
@@ -3658,16 +3371,13 @@ def query_shanghai_ranking(question):
                         params.append(f"%{subject_name}%")
                         break
 
-            # 检查学校名称
             school_pattern = r'([\u4e00-\u9fa5]+大学)'
-            import re
             school_matches = re.findall(school_pattern, question)
             if school_matches:
                 for school in school_matches:
                     conditions.append("school_name LIKE %s")
                     params.append(f"%{school}%")
 
-            # 构建查询
             if conditions:
                 query = """
                 SELECT 
@@ -3676,7 +3386,6 @@ def query_shanghai_ranking(question):
                 FROM shanghai_subject_rankings 
                 WHERE """ + " OR ".join(conditions)
 
-                # 添加排序
                 if '前十' in question or '前10' in question or 'top10' in question_lower:
                     query += " AND ranking_position_2025 <= 10 ORDER BY ranking_position_2025"
                 elif '前二十' in question or '前20' in question or 'top20' in question_lower:
@@ -3690,7 +3399,6 @@ def query_shanghai_ranking(question):
 
                 cursor.execute(query, params)
             else:
-                # 默认查询前50名
                 query = """
                 SELECT 
                     subject_name, school_name, ranking_position_2025, ranking_position_2024,
@@ -3704,7 +3412,7 @@ def query_shanghai_ranking(question):
             results = cursor.fetchall()
             return results
 
-    except Error as e:
+    except pymysql.Error as e:
         print(f"软科排名查询错误: {e}")
         return []
     finally:
@@ -3716,7 +3424,6 @@ def format_shanghai_ranking_results(results):
     if not results:
         return "未在软科排名数据库中查询到相关信息。"
 
-    # 按学科分组
     grouped_results = {}
     for result in results:
         subject_name = result['subject_name']
@@ -3729,7 +3436,6 @@ def format_shanghai_ranking_results(results):
     for subject_name, rankings in grouped_results.items():
         formatted += f"**{subject_name}**\n"
 
-        # 限制显示数量
         max_display = 20
         for i, ranking in enumerate(rankings[:max_display]):
             formatted += f"{i + 1:2d}. {ranking['school_name']:<20s} "
@@ -3748,7 +3454,6 @@ def format_shanghai_ranking_results(results):
 
         formatted += "\n"
 
-    # 添加说明
     formatted += """
 ---
 **说明**：
@@ -3763,15 +3468,12 @@ def format_shanghai_ranking_results(results):
 
 def combine_query_results(question):
     """合并考试科目和排名查询结果"""
-    # 查询考试科目数据
     exam_results = query_database(question)
     exam_context = format_database_results(exam_results)
 
-    # 查询软科排名数据
     ranking_results = query_shanghai_ranking(question)
     ranking_context = format_shanghai_ranking_results(ranking_results)
 
-    # 合并上下文
     combined_context = ""
 
     if "未在数据库中查询到相关信息" not in exam_context:
@@ -3790,35 +3492,28 @@ def login_page():
     """登录页面"""
     st.title("🎓 考研AI问答系统 - 登录")
 
-    # 创建登录表单
     with st.form("login_form"):
         email = st.text_input("邮箱", placeholder="请输入注册邮箱", key="login_email")
         password = st.text_input("密码", type="password", placeholder="请输入密码", key="login_password")
         submit = st.form_submit_button("登录", type="primary")
 
         if submit:
-            # 验证输入是否为空
             if not email or not password:
                 st.error("请输入邮箱和密码")
             else:
-                # 验证邮箱格式
                 if not validate_email(email):
                     st.error("邮箱格式不正确，请输入有效的邮箱地址")
                 else:
-                    # 调用邮箱验证函数
                     success, user = verify_user_by_email(email, password)
                     if success:
-                        # 登录成功，保存用户信息到session
                         st.session_state.user = user
                         st.session_state.page = "main"
                         st.success(f"登录成功，欢迎 {user['username']}！")
-                        # 延迟后重新运行以跳转到主页面
                         time.sleep(1)
                         st.rerun()
                     else:
                         st.error("邮箱或密码错误")
 
-    # 添加分隔线和注册选项
     st.markdown("---")
     st.write("还没有账号？")
 
@@ -3846,7 +3541,6 @@ def verify_user_by_email(email, password):
 
             user = cursor.fetchone()
             if user:
-                # 更新最后登录时间
                 cursor.execute(
                     "UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = %s",
                     (user['id'],)
@@ -3856,7 +3550,7 @@ def verify_user_by_email(email, password):
             else:
                 return False, None
 
-    except Error as e:
+    except pymysql.Error as e:
         return False, None
     finally:
         connection.close()
@@ -3874,7 +3568,6 @@ def register_page():
         submit = st.form_submit_button("注册")
 
         if submit:
-            # 验证输入
             if not username or not email or not password:
                 st.error("请填写所有字段")
             elif not validate_username(username):
@@ -3914,17 +3607,16 @@ def clear_chat_history(user_id):
             )
         connection.commit()
         return True
-    except Error:
+    except pymysql.Error:
         return False
     finally:
         connection.close()
 
 
 def main_page():
-    """主页面 - AI问答（优化版）"""
+    """主页面 - AI问答"""
     st.title("🤖 考研AI智能问答")
 
-    # 用户信息栏
     col1, col2, col3 = st.columns([3, 1, 1])
     with col1:
         st.write(f"欢迎，**{st.session_state.user['username']}**！")
@@ -3939,11 +3631,9 @@ def main_page():
 
     st.markdown("---")
 
-    # 添加一个清空历史记录的确认对话框
     if 'show_clear_confirm' not in st.session_state:
         st.session_state.show_clear_confirm = False
 
-    # 初始化聊天历史
     if 'messages' not in st.session_state:
         st.session_state.messages = []
         history = get_chat_history(st.session_state.user['id'])
@@ -3951,12 +3641,10 @@ def main_page():
             st.session_state.messages.append({"role": "user", "content": item['question']})
             st.session_state.messages.append({"role": "assistant", "content": item['answer']})
 
-    # 显示聊天记录
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    # 优化示例问题 - 增加排名相关示例
     st.subheader("💡 示例问题：")
     examples = [
         "中国地质大学信息安全专业有哪些研究方向？",
@@ -3971,7 +3659,6 @@ def main_page():
             if st.button(example[:15] + "..." if len(example) > 15 else example, key=f"example_{i}"):
                 st.session_state.new_question = example
 
-    # 聊天输入和操作按钮
     question = st.text_area(
         "请输入您的问题：",
         value=st.session_state.get('new_question', ''),
@@ -3979,27 +3666,20 @@ def main_page():
         placeholder="例如：中国地质大学信息安全专业有哪些研究方向？或：软科数学排名前十的学校？"
     )
 
-    # 操作按钮
     col1, col2, col3 = st.columns([4, 1, 1])
     with col1:
         if st.button("🔍 获取答案", type="primary", use_container_width=True):
             if question:
-                # 添加用户消息
                 st.session_state.messages.append({"role": "user", "content": question})
 
-                # 显示用户消息
                 with st.chat_message("user"):
                     st.markdown(question)
 
-                # 生成AI回复
                 with st.chat_message("assistant"):
                     with st.spinner("正在查询数据库并生成回答..."):
-                        # 合并查询考试科目和排名数据
                         context = combine_query_results(question)
 
-                        # 显示数据库查询结果（可折叠）
                         with st.expander("查看数据库原始查询结果", expanded=False):
-                            # 查询考试科目数据
                             exam_results = query_database(question)
                             if exam_results:
                                 st.subheader("考试科目数据")
@@ -4012,7 +3692,6 @@ def main_page():
                             else:
                                 st.info("考试科目数据库未查询到相关记录")
 
-                            # 查询软科排名数据
                             ranking_results = query_shanghai_ranking(question)
                             if ranking_results:
                                 st.subheader("软科排名数据")
@@ -4021,19 +3700,14 @@ def main_page():
                             else:
                                 st.info("软科排名数据库未查询到相关记录")
 
-                        # 调用AI API
                         response = call_deepseek_api(question, context)
 
-                        # 显示回答
                         st.markdown(response)
 
-                        # 保存到数据库
                         save_chat_history(st.session_state.user['id'], question, response)
 
-                # 添加助手消息
                 st.session_state.messages.append({"role": "assistant", "content": response})
 
-                # 清空问题
                 if 'new_question' in st.session_state:
                     del st.session_state.new_question
             else:
@@ -4047,13 +3721,11 @@ def main_page():
         if st.button("清空历史记录", use_container_width=True):
             st.session_state.show_clear_confirm = True
 
-    # 清空历史记录的确认对话框
     if st.session_state.show_clear_confirm:
         st.warning("⚠️ 确定要永久删除所有历史记录吗？此操作不可撤销！")
         col_yes, col_no = st.columns(2)
         with col_yes:
             if st.button("确定删除", type="primary"):
-                # 清空数据库记录
                 if clear_chat_history(st.session_state.user['id']):
                     st.session_state.messages = []
                     st.session_state.show_clear_confirm = False
@@ -4083,7 +3755,6 @@ def data_query_page():
 
     st.markdown("---")
 
-    # 查询选项 - 增加软科排名选项卡
     tab1, tab2, tab3, tab4 = st.tabs(["🔍 条件查询", "🏫 学校浏览", "📊 数据统计", "🥇 软科排名"])
 
     with tab1:
@@ -4146,7 +3817,7 @@ def data_query_page():
                             else:
                                 st.warning("未找到相关数据")
 
-                    except Error as e:
+                    except pymysql.Error as e:
                         st.error(f"查询失败: {e}")
                     finally:
                         connection.close()
@@ -4204,7 +3875,7 @@ def data_query_page():
                             else:
                                 st.warning("该学校暂无专业信息")
 
-                    except Error as e:
+                    except pymysql.Error as e:
                         st.error(f"查询失败: {e}")
                     finally:
                         connection.close()
@@ -4217,7 +3888,6 @@ def data_query_page():
         if connection:
             try:
                 with connection.cursor() as cursor:
-                    # 基本统计
                     col1, col2, col3 = st.columns(3)
 
                     with col1:
@@ -4235,7 +3905,6 @@ def data_query_page():
                         total_majors = cursor.fetchone()['COUNT(DISTINCT major_name)']
                         st.metric("专业数量", total_majors)
 
-                    # 热门专业
                     st.subheader("热门专业TOP 10")
                     cursor.execute("""
                         SELECT major_name, COUNT(*) as count 
@@ -4250,7 +3919,6 @@ def data_query_page():
                         df_major = pd.DataFrame(major_stats)
                         st.dataframe(df_major, use_container_width=True)
 
-                    # 地区分布
                     st.subheader("地区分布")
                     cursor.execute(
                         "SELECT region, COUNT(*) as count FROM exam_subjects GROUP BY region ORDER BY count DESC")
@@ -4260,7 +3928,7 @@ def data_query_page():
                         df_region = pd.DataFrame(region_stats)
                         st.bar_chart(df_region.set_index('region'))
 
-            except Error as e:
+            except pymysql.Error as e:
                 st.error(f"获取统计信息失败: {e}")
             finally:
                 connection.close()
@@ -4268,7 +3936,6 @@ def data_query_page():
     with tab4:
         st.subheader("软科排名查询")
 
-        # 排名查询选项
         col1, col2 = st.columns(2)
         with col1:
             ranking_subject = st.text_input("学科名称（如：数学、计算机）", key="ranking_subject")
@@ -4314,7 +3981,6 @@ def data_query_page():
                         results = cursor.fetchall()
 
                         if results:
-                            # 按学科分组显示
                             grouped_results = {}
                             for result in results:
                                 subject_name = result['subject_name']
@@ -4325,16 +3991,13 @@ def data_query_page():
                             for subject_name, rankings in grouped_results.items():
                                 st.subheader(f"{subject_name}")
 
-                                # 创建数据框
                                 df = pd.DataFrame(rankings)
                                 df = df[['school_name', 'ranking_position_2025', 'ranking_position_2024', 'score_2025',
                                          'subject_category']]
                                 df.columns = ['学校名称', '2025排名', '2024排名', '2025分数', '学科类别']
 
-                                # 显示表格
                                 st.dataframe(df, use_container_width=True)
 
-                                # 显示柱状图
                                 chart_df = df.head(10).copy()
                                 if not chart_df.empty:
                                     chart_df = chart_df.sort_values('2025排名')
@@ -4342,13 +4005,11 @@ def data_query_page():
                         else:
                             st.warning("未找到相关排名数据")
 
-                except Error as e:
+                except pymysql.Error as e:
                     st.error(f"查询失败: {e}")
                 finally:
                     connection.close()
 
-
-# ==================== 交互式命令行界面函数 ====================
 
 def interactive_crawler_ui():
     """交互式爬虫界面"""
@@ -4386,7 +4047,6 @@ def crawl_by_region():
     print("\n=== 按地区爬取考研专业信息 ===")
     spider = CompleteInfoSpider()
 
-    # 选择地区和院校特性
     regions, features = spider.select_region_and_features()
 
     if not regions:
@@ -4396,13 +4056,11 @@ def crawl_by_region():
     print(f"\n已选择地区: {regions}")
     print(f"已选择院校特性: {features}")
 
-    # 确认开始爬取
     confirm = input("确认开始爬取吗？(y/n): ").strip().lower()
     if confirm != 'y':
         print("已取消爬取")
         return
 
-    # 开始爬取
     print("\n开始爬取...")
     spider.crawl_by_regions_and_features(regions, features)
     print(f"\n爬取完成！数据已保存到数据库和Excel文件: {spider.excel_filename}")
@@ -4413,7 +4071,6 @@ def crawl_by_school():
     print("\n=== 按学校爬取考研专业信息 ===")
     spider = CompleteInfoSpider()
 
-    # 选择学校
     school_names = spider.select_schools_by_name()
 
     if not school_names:
@@ -4422,27 +4079,23 @@ def crawl_by_school():
 
     print(f"\n已选择学校: {school_names}")
 
-    # 确认开始爬取
     confirm = input("确认开始爬取吗？(y/n): ").strip().lower()
     if confirm != 'y':
         print("已取消爬取")
         return
 
-    # 开始爬取
     print("\n开始爬取...")
     spider.crawl_by_school_names(school_names)
     print(f"\n爬取完成！数据已保存到数据库和Excel文件: {spider.excel_filename}")
 
 
 def crawl_shanghai_ranking():
-    """爬取软科排名 - 改进版：先动态获取学科列表"""
+    """爬取软科排名"""
     print("\n=== 爬取软科排名 ===")
 
-    # 创建爬虫实例
     spider = ShanghaiRankingSpider(headless=True)
 
     try:
-        # 第一步：动态获取所有学科信息
         print("\n正在从软科官网获取学科列表...")
         subjects_data = spider.fetch_all_subjects_from_web()
 
@@ -4450,14 +4103,12 @@ def crawl_shanghai_ranking():
             print("获取学科列表失败，请检查网络连接或网站结构是否变化")
             return
 
-        # 显示所有学科供选择
-        subject_mapping = spider.display_all_subjects(subjects_data)
+        subject_mapping = spider.display_all_subjects()
 
         if not subject_mapping:
             print("未找到可用学科")
             return
 
-        # 第二步：让用户选择爬取模式
         print("\n请选择爬取模式：")
         print("1. 选择特定学科爬取")
         print("2. 爬取所有学科（耗时较长）")
@@ -4467,7 +4118,6 @@ def crawl_shanghai_ranking():
         mode = input("\n请输入选项 (1-4): ").strip()
 
         if mode == "1":
-            # 选择特定学科
             while True:
                 selection = input("\n请输入要爬取的学科编号（多个用逗号分隔，0返回）: ").strip()
 
@@ -4483,20 +4133,17 @@ def crawl_shanghai_ranking():
                         print("无效的编号，请重新输入")
                         continue
 
-                    # 显示选择的学科
                     selected_subjects = []
                     for idx in valid_indices:
                         subject_code, subject_name, category_code, category_name = subject_mapping[idx]
                         selected_subjects.append((subject_code, subject_name))
                         print(f"  - {subject_code} {subject_name}")
 
-                    # 确认爬取
                     confirm = input(f"\n确认爬取以上 {len(selected_subjects)} 个学科吗？(y/n): ").strip().lower()
                     if confirm != 'y':
                         print("已取消爬取")
                         continue
 
-                    # 开始爬取选中的学科
                     print("\n开始爬取...")
                     all_data = []
 
@@ -4510,7 +4157,6 @@ def crawl_shanghai_ranking():
                         else:
                             print(f"  未获取到数据")
 
-                        # 避免请求过快，最后一个不需要等待
                         if i < len(selected_subjects) - 1:
                             delay = random.uniform(3, 8)
                             print(f"  等待 {delay:.1f} 秒后继续...")
@@ -4523,7 +4169,6 @@ def crawl_shanghai_ranking():
                     print("输入格式错误，请重新输入")
 
         elif mode == "2":
-            # 爬取所有学科
             total_subjects = len(subject_mapping)
             print(f"\n警告：将爬取全部 {total_subjects} 个学科，这可能需要很长时间！")
 
@@ -4532,7 +4177,6 @@ def crawl_shanghai_ranking():
                 print("已取消爬取")
                 return
 
-            # 开始爬取所有学科
             print("\n开始爬取所有学科...")
             all_data = []
             current = 1
@@ -4541,7 +4185,7 @@ def crawl_shanghai_ranking():
                 subject_code, subject_name, category_code, category_name = subject_mapping[idx]
                 print(f"\n[{current}/{total_subjects}] 爬取学科: {subject_name} ({subject_code})")
 
-                data = spider.fetch_subject_data(subject_code, subject_name, max_pages=2)  # 所有学科只爬前2页
+                data = spider.fetch_subject_data(subject_code, subject_name, max_pages=2)
                 if data:
                     spider.save_subject_rankings_to_db(data)
                     all_data.extend(data)
@@ -4551,7 +4195,6 @@ def crawl_shanghai_ranking():
 
                 current += 1
 
-                # 避免请求过快
                 if current <= total_subjects:
                     delay = random.uniform(5, 10)
                     print(f"  等待 {delay:.1f} 秒后继续...")
@@ -4560,15 +4203,12 @@ def crawl_shanghai_ranking():
             print(f"\n所有学科爬取完成，共获取 {len(all_data)} 条数据")
 
         elif mode == "3":
-            # 按学科类别爬取
             print("\n请选择学科类别：")
 
-            # 获取所有类别
             categories = {}
             for category_code, category_info in subjects_data.items():
                 categories[category_code] = category_info['category_name']
 
-            # 显示类别
             sorted_cat_codes = sorted(categories.keys())
             for i, cat_code in enumerate(sorted_cat_codes, 1):
                 print(f"{i:2d}. [{cat_code}] {categories[cat_code]}")
@@ -4591,7 +4231,6 @@ def crawl_shanghai_ranking():
                         print("无效的编号，请重新输入")
                         continue
 
-                    # 获取选中的类别
                     selected_categories = []
                     cat_keys = list(categories.keys())
                     for idx in valid_cat_indices:
@@ -4599,7 +4238,6 @@ def crawl_shanghai_ranking():
                         cat_name = categories[cat_code]
                         selected_categories.append((cat_code, cat_name))
 
-                    # 显示选中的类别和包含的学科
                     total_subjects_in_cats = 0
                     for cat_code, cat_name in selected_categories:
                         subjects_in_cat = subjects_data[cat_code]['subjects']
@@ -4608,14 +4246,12 @@ def crawl_shanghai_ranking():
                         for subj_code, subj_name in subjects_in_cat:
                             print(f"  - {subj_code} {subj_name}")
 
-                    # 确认爬取
                     confirm = input(
                         f"\n确认爬取以上 {len(selected_categories)} 个类别共 {total_subjects_in_cats} 个学科吗？(y/n): ").strip().lower()
                     if confirm != 'y':
                         print("已取消爬取")
                         continue
 
-                    # 开始爬取
                     print("\n开始爬取...")
                     all_data = []
                     total_processed = 0
@@ -4636,7 +4272,6 @@ def crawl_shanghai_ranking():
                             else:
                                 print(f"  未获取到数据")
 
-                            # 避免请求过快
                             if total_processed < total_subjects_in_cats:
                                 delay = random.uniform(4, 8)
                                 print(f"  等待 {delay:.1f} 秒后继续...")
@@ -4677,7 +4312,6 @@ def delete_data():
     choice = input("请输入选项 (1-5): ").strip()
 
     if choice == "1":
-        # 按地区删除
         region = input("请输入要删除的地区名称: ").strip()
         if region:
             spider = CompleteInfoSpider()
@@ -4687,7 +4321,6 @@ def delete_data():
                 print(f"删除地区 '{region}' 数据失败")
 
     elif choice == "2":
-        # 按学校删除
         school_name = input("请输入要删除的学校名称: ").strip()
         if school_name:
             spider = CompleteInfoSpider()
@@ -4697,14 +4330,12 @@ def delete_data():
                 print(f"删除学校 '{school_name}' 数据失败")
 
     elif choice == "3":
-        # 按学科删除软科排名
         subject_name = input("请输入要删除的学科名称: ").strip()
         if subject_name:
             spider = ShanghaiRankingSpider()
             spider.delete_subject_data(subject_name)
 
     elif choice == "4":
-        # 清空所有软科排名数据
         spider = ShanghaiRankingSpider()
         spider.clear_database()
 
@@ -4717,11 +4348,6 @@ def delete_data():
 
 def main():
     """主函数"""
-    # 检查MySQL是否可用
-    if 'MYSQL_AVAILABLE' not in globals():
-        global MYSQL_AVAILABLE
-        MYSQL_AVAILABLE = True
-
     # 初始化数据库
     if 'db_initialized' not in st.session_state:
         if init_database():
@@ -4753,26 +4379,17 @@ def main():
             st.rerun()
 
 
-# ==================== 入口点判断 ====================
-
 def is_running_in_streamlit():
     """检查是否在Streamlit环境中运行"""
     try:
         from streamlit.runtime.scriptrunner import get_script_run_ctx
         return get_script_run_ctx() is not None
     except:
-        # 如果无法导入，说明不在Streamlit环境中
         return False
 
 
 def streamlit_main():
     """Streamlit应用的入口函数"""
-    # 检查MySQL是否可用
-    if 'MYSQL_AVAILABLE' not in globals():
-        global MYSQL_AVAILABLE
-        MYSQL_AVAILABLE = True
-
-    # 初始化数据库
     if 'db_initialized' not in st.session_state:
         if init_database():
             st.session_state.db_initialized = True
@@ -4780,11 +4397,9 @@ def streamlit_main():
             st.error("数据库初始化失败，请检查数据库连接")
             return
 
-    # 页面路由
     if 'page' not in st.session_state:
         st.session_state.page = "login"
 
-    # 根据当前页面显示相应内容
     if st.session_state.page == "login":
         login_page()
     elif st.session_state.page == "register":
@@ -4808,13 +4423,9 @@ def command_line_main():
     interactive_crawler_ui()
 
 
-# ==================== 主程序入口 ====================
-
 if __name__ == "__main__":
     # 自动检测运行环境
     if is_running_in_streamlit():
-        # Streamlit环境：运行Web应用
         streamlit_main()
     else:
-        # 命令行环境：运行爬虫工具
         command_line_main()
