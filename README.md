@@ -160,7 +160,7 @@
 2. **Edge驱动路径配置**
    在`main.py`中修改Edge驱动路径（第365行左右）：
    ```python
-   driver_path = r'D:\work and study\person\数据库\爬虫+数据库\kaoyan_assistant\msedgedriver.exe'
+   driver_path = '../msedgedriver.exe'
    ```
 
 3. **API密钥配置**
@@ -366,5 +366,6 @@ ORDER BY count DESC;
 - AI服务基于DeepSeek大语言模型（https://www.deepseek.com/）
 
 **免责声明**：本项目仅供学习和研究使用，请勿用于商业用途。数据准确性以官方发布为准。
+
 
 
