@@ -280,6 +280,7 @@ kaoyan_assistant/
 │   └── secrets.toml           # API密钥配置文件
 ├── msedgedriver.exe           # Edge浏览器驱动（需自行下载）
 ├── crawler_*.log              # 爬虫日志文件（运行时生成）
+├──AI对话Markdown/             # 导出的AI对话
 ├── 完整信息_考研专业信息-*.xlsx  # 导出的Excel数据文件
 └── exports/                   # 导出目录
     └── shanghai_subject_rankings_*.xlsx  # 软科排名导出文件
@@ -366,6 +367,7 @@ ORDER BY count DESC;
 - AI服务基于DeepSeek大语言模型（https://www.deepseek.com/）
 
 **免责声明**：本项目仅供学习和研究使用，请勿用于商业用途。数据准确性以官方发布为准。
+
 
 
 
